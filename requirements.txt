@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+pydantic-settings
+pandas
+openpyxl
+pinecone
+langchain
+langchain-openai
+langgraph
+python-dotenv
+email-validator
+streamlit
+httpx
