@@ -4,8 +4,20 @@ from langchain_openai import ChatOpenAI
 from app.core.config import settings
 
 
+llm = ChatOpenAI(
+    model=settings.openai_model,
+    api_key=settings.openai_api_key,
+    temperature=0,
+)
+
+
 def extract_json(text: str):
+    if not isinstance(text, str):
+        return None
+
     text = text.strip()
+    if not text:
+        return None
 
     try:
         return json.loads(text)
@@ -22,136 +34,99 @@ def extract_json(text: str):
     return None
 
 
-def detect_intent(user_query: str) -> dict:
-    llm = ChatOpenAI(
-        model=settings.openai_model,
-        api_key=settings.openai_api_key,
-        temperature=0,
-    )
+def normalize_response_content(response):
+    if response is None:
+        return None
 
-    prompt = """
-    You are an intent classifier for a real-estate chatbot.
+    content = getattr(response, "content", None)
 
-    Task:
-    Classify the user's latest message into exactly one intent.
+    if isinstance(content, str):
+        return content
 
-    Return JSON only.
-    Return exactly one object in this shape:
-    {{
-      "intent": "search"
-    }}
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if text:
+                    parts.append(text)
+            elif isinstance(item, str):
+                parts.append(item)
+        return "\n".join(parts).strip() if parts else None
 
-    Allowed values for "intent" only:
-    - "search"
-    - "lead"
-    - "company_info"
+    text = getattr(response, "text", None)
+    if isinstance(text, str):
+        return text
 
-    Output rules:
-    - No explanation
-    - No markdown
-    - No extra keys
-    - No text before or after the JSON
-    - Think through edge cases silently
+    return str(content) if content is not None else None
 
-    Decision policy:
-    Follow these rules in priority order. If multiple intents could apply, use the first matching rule.
 
-    1) lead
-    Choose "lead" if the user is expressing interest in a property OR providing any contact, even if the message is short, partial, or unstructured.
+def detect_intent(user_query: str):
+    prompt = f"""
+You are an intent classifier for a real-estate assistant.
 
-    Lead signals include:
-    - saying they are interested in a unit, property, or project
-    - asking for a viewing, reservation, callback, or follow-up
-    - sending contact details, even without any other text
-    - sending lead-like details in messy or unstructured form
-    - continuing an existing sales conversation with extra personal or qualification details
+Classify the user's message into exactly one of these intents:
+- "search"
+- "lead"
+- "company_info"
 
-    Examples of lead-like details:
-    - phone number
-    - email address
-    - name or self-identification
-    - preferred contact time
-    - project name or unit code together with interest
+Intent definitions:
+- "search": the user wants apartments/properties, recommendations, listings, or is filtering by city, area, budget, bedrooms, bathrooms, title, compound, or view.
+- "lead": the user shows interest in a specific property, asks to be contacted, shares phone/email/name, requests a callback, asks to book/view/visit, or continues a contact/lead flow.
+- "company_info": the user asks about Dorra itself, such as company background, developers, projects, branches, offices, hotline, contact channels, email, website, or general company information.
 
-    Phone-number rule:
-    Classify as "lead" if the message is mostly digits and phone separators such as +, spaces, dashes, or parentheses, and the total digit count looks like a phone number (roughly 7 to 15 digits).
+Important rules:
+- Return exactly one intent.
+- Return valid JSON only.
+- Do not include markdown fences.
+- Do not include explanations.
+- Do not include any text before or after the JSON.
+- The output must match this exact schema:
+{{"intent":"search"}}
 
-    Examples:
-    - 01012345678
-    - +20 101 234 5678
-    - (010) 123-45678
+Examples:
 
-    Do NOT confuse phone numbers with search numbers:
-    - 3 bedroom
-    - 8 million
-    - 120 sqm
-    These are "search".
+User: I need a 3-bedroom apartment in New Cairo
+Output:
+{{"intent":"search"}}
 
-    Unstructured lead examples:
-    - Ahmed 01012345678
-    - Sara / +201234567890 / call after 6
-    - mohamed@gmail.com
-    - interested in New Zayed
-    - this unit please call me
-    - 2BR in Sheikh Zayed, 9M max, cash, call tomorrow
-    - yes my number is 01012345678
-    - Ahmed Ali
-    - tomorrow after 5
-    - 01012345678
+User: Show me apartments under 8 million in Sheikh Zayed
+Output:
+{{"intent":"search"}}
 
-    2) company_info
-    Choose "company_info" if the user is asking about Dorra itself rather than searching for a property.
+User: I am interested in ap003
+Output:
+{{"intent":"lead"}}
 
-    Company info examples:
-    - who is Dorra
-    - Dorra background, history, founder, developer profile
-    - Dorra projects as a company portfolio
-    - hotline, office, branch, address, email, website
-    - working hours, customer service, contact channels
+User: My phone is 01012345678
+Output:
+{{"intent":"lead"}}
 
-    Important distinction:
-    - Asking for Dorra's phone / email / hotline => "company_info"
-    - Sending the user's own phone / email => "lead"
+User: Please call me tomorrow
+Output:
+{{"intent":"lead"}}
 
-    3) search
-    Choose "search" if the user is looking for properties or recommendations, browsing availability, or specifying search criteria.
+User: Tell me about Dorra
+Output:
+{{"intent":"company_info"}}
 
-    Search examples:
-    - city, area, compound, project
-    - budget or price range
-    - bedrooms, bathrooms, size
-    - property type
-    - finishing, delivery date, view, floor
-    - buy / rent / investment preferences
-    - requests like "show me apartments in New Cairo under 10M"
+User: What is Dorra's hotline?
+Output:
+{{"intent":"company_info"}}
 
-    Tie-breakers:
-    - If both "search" and "lead" apply, return "lead".
-    - If both "company_info" and "lead" apply, return "lead".
-    - If both "company_info" and "search" apply, choose:
-      - "search" if the user wants units or properties
-      - "company_info" if the user wants information about Dorra itself
+Now classify this user message.
 
-    Language handling:
-    - Handle English, Arabic, Franco-Arabic, mixed language, typos, slang, emojis, copied text, and broken formatting.
-    - The input does not need to be a full sentence.
+User: {user_query}
+Output:
+""".strip()
 
-    Examples:
-    User: 01012345678
-    Output: {{"intent":"lead"}}
+    try:
+        response = llm.invoke(prompt)
+    except Exception:
+        return {"intent": "search"}
 
-    User: Ahmed 01012345678 interested in October
-    Output: {{"intent":"lead"}}
-
-    User: Need 3BR in New Cairo under 12M
-    Output: {{"intent":"search"}}
-
-    User: What is Dorra hotline?
-    Output: {{"intent":"company_info"}}
-    """.strip()
-
-    response = llm.invoke(prompt)
-    parsed = extract_json(response.content)
+    raw_text = normalize_response_content(response)
+    parsed = extract_json(raw_text)
 
     if not isinstance(parsed, dict):
         return {"intent": "search"}
