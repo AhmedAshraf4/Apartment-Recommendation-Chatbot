@@ -1,10 +1,10 @@
 import json
 import re
-
+import time
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pinecone import Pinecone
-
 from app.core.config import settings
+from langsmith import traceable
 
 company_context = """
 ## About Us:
@@ -23,9 +23,11 @@ Examples of Dorra projects shown on official websites include:
 - Village West Apartments and Village West Villas
 """
 
+
 def get_index():
     pc = Pinecone(api_key=settings.pinecone_api_key)
     return pc.Index(settings.pinecone_index_name)
+
 
 def extract_json_object(text):
     text = text.strip()
@@ -59,16 +61,16 @@ def normalize_filters(filters):
         "view": filters.get("view"),
     }
 
-
+@traceable(name="extract_meta")
 def extract_meta(user_query):
-    llm = ChatOpenAI(model=settings.openai_model,api_key=settings.openai_api_key,temperature=0.2)
+    llm = ChatOpenAI(model=settings.openai_model, api_key=settings.openai_api_key, temperature=0.2)
 
     prompt = f"""
     You are a strict information-extraction engine for apartment search queries.
-    
+
     Your job is to extract only the supported filters from the user query
     and return exactly one valid JSON object.
-    
+
     OUTPUT RULES:
     - Return JSON only.
     - Do not add markdown, code fences, comments, or explanations.
@@ -76,9 +78,9 @@ def extract_meta(user_query):
       "title", "city", "bedrooms", "bathrooms", "min_price", "max_price", "view"
     - Use null for missing, unclear, or unsupported values.
     - Prices must be integers in EGP with no commas, symbols, or words.
-    
+
     FIELD RULES:
-    
+
     1) title
     - Extract the property type only if explicitly stated or clearly implied.
     - Allowed values only:
@@ -92,7 +94,7 @@ def extract_meta(user_query):
       - "show me a penthouse" -> "penthouse"
       - "3-bedroom townhouse in Sheikh Zayed" -> "townhouse"
     - If no valid property type is clearly mentioned, return null.
-    
+
     2) city
     - Extract the city only from the query.
     - Ignore micro-areas, compounds, neighborhoods, and districts.
@@ -102,7 +104,7 @@ def extract_meta(user_query):
       - "around Sheikh Zayed" -> "sheikh zayed"
       - "in Beverly Hills, 6th of October" -> "6th of october"
       - "in Maadi" -> "maadi"
-    
+
     3) bedrooms
     - Extract only when the query clearly asks for an exact bedroom count.
     - Examples:
@@ -111,7 +113,7 @@ def extract_meta(user_query):
     - Examples:
       - "at least 3 bedrooms" -> null
       - "3+ bedrooms" -> null
-    
+
     4) bathrooms
     - Extract only when the query clearly asks for an exact bathroom count.
     - Examples:
@@ -120,7 +122,7 @@ def extract_meta(user_query):
     - Examples:
       - "at least 2 bathrooms" -> null
       - "2+ baths" -> null
-    
+
     5) price
     - Interpret prices in EGP.
     - Convert shorthand into full integers.
@@ -135,7 +137,7 @@ def extract_meta(user_query):
       - "between 3 and 5 million" -> min_price = 3000000 and max_price = 5000000
       - "from 3m to 5m" -> min_price = 3000000 and max_price = 5000000
     - If only one side of the range is stated, leave the other side null.
-    
+
     6) view
     - Extract only if explicitly mentioned.
     - Return a short normalized keyword, not a full phrase.
@@ -144,17 +146,17 @@ def extract_meta(user_query):
       - "sea view" -> "sea"
       - "pool view" -> "pool"
       - "city view" -> "city"
-    
+
     7) unsupported preferences
     - Ignore anything that is not representable in the schema.
     - Examples:
       - "cheap", "luxury", "family-friendly", "modern", "near schools", "best option"
     - Do not turn these into any filter.
-    
+
     8) no guessing
     - Do not infer values that are not clearly stated.
     - Do not guess title, city, price, bedrooms, bathrooms, or view.
-    
+
     Return this exact JSON shape:
     {{
       "title": null,
@@ -165,9 +167,9 @@ def extract_meta(user_query):
       "max_price": null,
       "view": null
     }}
-    
+
     Examples:
-    
+
     User query: I need a 2-bedroom apartment in New Cairo under 4 million with a garden view
     Output:
     {{
@@ -179,7 +181,7 @@ def extract_meta(user_query):
       "max_price": 4000000,
       "view": "garden"
     }}
-    
+
     User query: Show me a townhouse in Sheikh Zayed between 3 and 5 million
     Output:
     {{
@@ -191,7 +193,7 @@ def extract_meta(user_query):
       "max_price": 5000000,
       "view": null
     }}
-    
+
     User query: I want a penthouse with pool view in October
     Output:
     {{
@@ -203,9 +205,9 @@ def extract_meta(user_query):
       "max_price": null,
       "view": "pool"
     }}
-    
+
     Now extract filters from this user query:
-    
+
     {user_query}
     """.strip()
 
@@ -254,8 +256,9 @@ def contains_case_insensitive(source, target):
     return str(target).strip().lower() in str(source).strip().lower()
 
 
+@traceable(name="search_apartments")
 def search_apartments(user_query, filters, top_k):
-    embeddings_model = OpenAIEmbeddings(model=settings.openai_embedding_model,api_key=settings.openai_api_key)
+    embeddings_model = OpenAIEmbeddings(model=settings.openai_embedding_model, api_key=settings.openai_api_key)
     index = get_index()
 
     query_vector = embeddings_model.embed_query(user_query)
@@ -328,15 +331,16 @@ def format_matches_for_prompt(matches):
     return "\n\n".join(blocks)
 
 
+@traceable(name="generate_answer")
 def generate_answer(user_query, matches):
-    llm = ChatOpenAI(model=settings.openai_model,api_key=settings.openai_api_key,temperature=0.2)
+    llm = ChatOpenAI(model=settings.openai_model, api_key=settings.openai_api_key, temperature=0.2)
     context = format_matches_for_prompt(matches)
 
     prompt = f"""
     You are a real-estate recommendation assistant for Dorra.
-    
+
     Use only the contexts below.
-    
+
     STRICT RULES:
     1. Recommend only apartments from Apartment Context.
     2. Never invent apartment IDs, prices, locations, amenities, or features.
@@ -345,7 +349,8 @@ def generate_answer(user_query, matches):
     5. Do not add apartments that are not present in Apartment Context.
     6. The apartments are already sorted by price from lowest to highest.
     7. For each apartment, write one short sentence explaining why it may fit the user's request.
-    
+    8. If an apartment from the above does not match the user query, remove it.
+
     Return JSON only in this exact shape:
     {{
       "intro": "string",
@@ -357,19 +362,19 @@ def generate_answer(user_query, matches):
       ],
       "company_note": "string"
     }}
-    
+
     Writing rules:
     - "intro" should briefly say that the apartments are sorted by price from lowest to highest.
     - "fit_reason" should be one short, user-friendly sentence.
     - Base each fit_reason only on the user query and the actual apartment details.
     - If no apartments are suitable, return an empty recommendations list and explain that in "intro".
-    
+
     User query:
     {user_query}
-    
+
     Apartment Context:
     {context}
-    
+
     """.strip()
 
     response = llm.invoke(prompt)
@@ -385,6 +390,7 @@ def generate_answer(user_query, matches):
     return parsed
 
 
+@traceable(name="validate_output")
 def validate_output(output_data, matches):
     valid_ids = {match["apartment_id"] for match in matches}
 
@@ -404,7 +410,7 @@ def validate_output(output_data, matches):
     output_data["recommendations"] = cleaned_recommendations
     return output_data
 
-
+@traceable(name="merge_recommendations")
 def merge_recommendations(output_data, matches):
     matches = {match["apartment_id"]: match for match in matches}
     final_items = []
@@ -436,6 +442,7 @@ def merge_recommendations(output_data, matches):
         "company_note": company_context
     }
 
+
 def render_reply(final_output):
     intro = final_output.get("intro", "").strip()
     recommendations = final_output.get("recommendations", [])
@@ -452,9 +459,9 @@ def render_reply(final_output):
             f"   Type: {rec.get('title', 'Property').title()}\n"
             f"   Price: {rec.get('price', 'N/A')} EGP\n"
             f"   Location: {rec.get('city', 'N/A')} - {rec.get('area', 'N/A')}\n"
-            f"   Specs: {rec.get('bedrooms', 'N/A')} bedrooms, {rec.get('bathrooms', 'N/A')} bathrooms, {rec.get('area_sqm', 'N/A')} sqm\n"
-            f"   Amenities: {rec.get('amenities', 'N/A')}"
-            f"   Description: {rec.get('description', 'N/A')}"
+            f"   Specs: {int(rec.get('bedrooms', 'N/A'))} bedrooms, {int(rec.get('bathrooms', 'N/A'))} bathrooms, {rec.get('area_sqm', 'N/A')} sqm\n"
+            f"   Amenities: {rec.get('amenities', 'N/A')}\n"
+            f"   Description: {rec.get('description', 'N/A')}\n"
             f"   View: {rec.get('view', 'N/A')}\n"
             f"   Why it may fit you: {rec.get('fit_reason', 'This may fit your request based on the retrieved details.')}"
         )
@@ -465,15 +472,62 @@ def render_reply(final_output):
 
     return "\n\n".join(sections).strip()
 
+
+def render_one_recommendation(index, rec):
+    return (
+        f"{index}. ID: {rec.get('apartment_id', '')}\n"
+        f"   Type: {rec.get('title', 'Property').title()}\n"
+        f"   Price: {rec.get('price', 'N/A')} EGP\n"
+        f"   Location: {rec.get('city', 'N/A')} - {rec.get('area', 'N/A')}\n"
+        f"   Specs: {int(rec.get('bedrooms', 'N/A'))} bedrooms, {int(rec.get('bathrooms', 'N/A'))} bathrooms, {rec.get('area_sqm', 'N/A')} sqm\n"
+        f"   Amenities: {rec.get('amenities', 'N/A')}\n"
+        f"   Description: {rec.get('description', 'N/A')}\n"
+        f"   View: {rec.get('view', 'N/A')}\n"
+        f"   Why it may fit you: {rec.get('fit_reason', 'This may fit your request based on the retrieved details.')}\n\n"
+    )
+
+def build_final_output(user_query, matches):
+    raw_out = generate_answer(user_query, matches)
+    val_out = validate_output(raw_out, matches)
+    return merge_recommendations(val_out, matches)
+
+
+def chunk_text(text, chunk_size):
+    for i in range(0, len(text), chunk_size):
+        yield text[i:i + chunk_size]
+        time.sleep(0.03)
+
+
+def stream_recommendation_text(user_query, matches):
+    final_out = build_final_output(user_query, matches)
+    intro = final_out.get("intro", "").strip()
+    if intro:
+        yield intro + "\n\n"
+
+    recommendations = final_out.get("recommendations", [])
+    if not recommendations:
+        yield "No matching apartment was found in the dataset.\n\n"
+    else:
+        for i, rec in enumerate(recommendations, start=1):
+            block = render_one_recommendation(i, rec)
+            for piece in chunk_text(block, 18):
+                yield piece
+
+    company_note = final_out.get("company_note", "").strip()
+    if company_note:
+        for piece in chunk_text(f"About Dorra: {company_note}", 18):
+            yield piece
+
+
 def run_chat(user_query):
     filters = extract_meta(user_query)
     matches = search_apartments(user_query, filters, 15)
-    raw_out = generate_answer(user_query, matches)
-    val_out = validate_output(raw_out, matches)
-    final_out = merge_recommendations(val_out, matches)
+    final_out = build_final_output(user_query, matches)
 
     reply = render_reply(final_out)
 
     return {
-        "reply": reply
+        "reply": reply,
+        "recommendations": final_out.get("recommendations", []),
+        "company_note": final_out.get("company_note", ""),
     }

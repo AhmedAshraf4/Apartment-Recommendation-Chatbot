@@ -1,7 +1,9 @@
 import smtplib
 from email.message import EmailMessage
 from app.core.config import settings
+from langsmith import traceable
 
+@traceable(name="send_email")
 def send_email(apartment, lead_data):
     agent_email = apartment.get("agent_email")
     apartment_id = apartment.get("apartment_id")

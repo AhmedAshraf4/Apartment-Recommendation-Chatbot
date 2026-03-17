@@ -2,6 +2,8 @@ import json
 import re
 from langchain_openai import ChatOpenAI
 from app.core.config import settings
+import time
+from langsmith import traceable
 
 
 def extract_json(text):
@@ -21,14 +23,18 @@ def extract_json(text):
 
     return None
 
+@traceable(name="extract_lead_info")
 def extract_lead_info(user_query):
-    llm = ChatOpenAI(model=settings.openai_model,api_key=settings.openai_api_key)
+    llm = ChatOpenAI(
+        model=settings.openai_model,
+        api_key=settings.openai_api_key
+    )
 
     prompt = f"""
     You are a strict information extraction engine for real-estate lead collection.
-    
+
     Extract lead information from the user message.
-    
+
     Return JSON only in this exact shape:
     {{
       "apartment_id": null,
@@ -37,7 +43,7 @@ def extract_lead_info(user_query):
       "email": null,
       "preferred_contact_time": null
     }}
-    
+
     Rules:
     - Use null for missing values.
     - Do not invent any values.
@@ -49,9 +55,9 @@ def extract_lead_info(user_query):
       - "weekends"
       - "anytime"
     - If the user message does not contain a field, leave it null.
-    
+
     Examples:
-    
+
     User: I am interested in ap003
     Output:
     {{
@@ -61,7 +67,7 @@ def extract_lead_info(user_query):
       "email": null,
       "preferred_contact_time": null
     }}
-    
+
     User: My name is Ahmed Ashraf
     Output:
     {{
@@ -71,7 +77,7 @@ def extract_lead_info(user_query):
       "email": null,
       "preferred_contact_time": null
     }}
-    
+
     User: My phone is 01012345678 and my email is ahmed@example.com
     Output:
     {{
@@ -81,7 +87,7 @@ def extract_lead_info(user_query):
       "email": "ahmed@example.com",
       "preferred_contact_time": null
     }}
-    
+
     User: Please contact me after 6 pm
     Output:
     {{
@@ -91,7 +97,7 @@ def extract_lead_info(user_query):
       "email": null,
       "preferred_contact_time": "after 6 pm"
     }}
-    
+
     User message:
     {user_query}
     """.strip()
@@ -117,6 +123,7 @@ def extract_lead_info(user_query):
     }
 
 
+@traceable(name="merge_lead_data")
 def merge_lead_data(existing, new_data):
     existing = existing or {}
     new_data = new_data or {}
@@ -140,6 +147,7 @@ def merge_lead_data(existing, new_data):
     return merged
 
 
+@traceable(name="get_missing_fields")
 def get_missing_fields(lead_data):
     required_fields = ["apartment_id", "name", "phone", "email", "preferred_contact_time"]
     return [field for field in required_fields if not lead_data.get(field)]
@@ -179,3 +187,24 @@ def build_success_reply(lead_data):
         f"Thanks, I now have all the needed details for apartment {apartment_id}. "
         f"I’m going to send your request to the responsible agent by email, and I’ll include that your preferred contact time is {preferred_contact_time}."
     )
+
+
+def chunk_text(text, chunk_size=18):
+    text = text or ""
+    for i in range(0, len(text), chunk_size):
+        yield text[i:i + chunk_size]
+        time.sleep(0.03)
+
+
+def stream_missing_reply(lead_data, missing_fields, chunk_size=18):
+    reply = build_missing_reply(lead_data, missing_fields)
+    yield from chunk_text(reply, chunk_size)
+
+
+def stream_success_reply(lead_data, chunk_size=18):
+    reply = build_success_reply(lead_data)
+    yield from chunk_text(reply, chunk_size)
+
+
+def stream_error_reply(message, chunk_size=18):
+    yield from chunk_text(message, chunk_size)

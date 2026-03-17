@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import PageHeader from "../components/PageHeader";
-import { apiRequest } from "../api";
+import { API_BASE } from "../api";
 
 function generateSessionId() {
   return `session_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
@@ -8,6 +8,9 @@ function generateSessionId() {
 
 export default function UserPage() {
   const sessionId = useMemo(() => generateSessionId(), []);
+  const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
+
   const [messages, setMessages] = useState([
     {
       role: "assistant",
@@ -18,19 +21,27 @@ export default function UserPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
   async function handleSend(e) {
     e.preventDefault();
 
     const message = input.trim();
     if (!message || loading) return;
 
-    const userMessage = { role: "user", content: message };
-    setMessages((prev) => [...prev, userMessage]);
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: message },
+      { role: "assistant", content: "Thinking..." },
+    ]);
+
     setInput("");
     setLoading(true);
 
     try {
-      const data = await apiRequest("/chat", {
+      const response = await fetch(`${API_BASE}/chat/stream`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -39,23 +50,63 @@ export default function UserPage() {
           session_id: sessionId,
           message,
         }),
+        credentials: "include",
       });
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: data.reply || "Sorry, I couldn’t generate a response.",
-        },
-      ]);
+      if (!response.ok) {
+        let errorMessage = "Something went wrong while contacting the server.";
+        try {
+          const data = await response.json();
+          errorMessage = data.detail || errorMessage;
+        } catch {}
+        throw new Error(errorMessage);
+      }
+
+      if (!response.body) {
+        throw new Error("Streaming is not supported by this browser.");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullText = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        fullText += chunk;
+
+        setMessages((prev) => {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            role: "assistant",
+            content: fullText,
+          };
+          return updated;
+        });
+      }
+
+      if (!fullText.trim()) {
+        setMessages((prev) => {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            role: "assistant",
+            content: "Sorry, I couldn’t generate a response.",
+          };
+          return updated;
+        });
+      }
     } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        {
+      setMessages((prev) => {
+        const updated = [...prev];
+        updated[updated.length - 1] = {
           role: "assistant",
-          content: err.message || "Something went wrong while contacting the server.",
-        },
-      ]);
+          content:
+            err.message || "Something went wrong while contacting the server.",
+        };
+        return updated;
+      });
     } finally {
       setLoading(false);
     }
@@ -70,27 +121,28 @@ export default function UserPage() {
 
       <div className="chat-page">
         <div className="chat-card">
-          <div className="chat-messages">
+          <div className="chat-messages" ref={messagesContainerRef}>
             {messages.map((msg, index) => (
               <div
                 key={index}
                 className={`chat-bubble ${
-                  msg.role === "user" ? "chat-bubble--user" : "chat-bubble--assistant"
+                  msg.role === "user"
+                    ? "chat-bubble--user"
+                    : "chat-bubble--assistant"
                 }`}
               >
                 <div className="chat-bubble__label">
                   {msg.role === "user" ? "You" : "Assistant"}
                 </div>
-                <div className="chat-bubble__content">{msg.content}</div>
+                <div className="chat-bubble__content">
+                  {msg.content}
+                  {loading && index === messages.length - 1 && (
+                    <span className="typing-cursor"></span>
+                  )}
+                </div>
               </div>
             ))}
-
-            {loading && (
-              <div className="chat-bubble chat-bubble--assistant">
-                <div className="chat-bubble__label">Assistant</div>
-                <div className="chat-bubble__content">Typing...</div>
-              </div>
-            )}
+            <div ref={messagesEndRef} />
           </div>
 
           <form className="chat-input-area" onSubmit={handleSend}>
@@ -101,7 +153,7 @@ export default function UserPage() {
               rows={3}
             />
             <button className="btn btn-primary" type="submit" disabled={loading}>
-              {loading ? "Sending..." : "Send"}
+              {loading ? "Streaming..." : "Send"}
             </button>
           </form>
         </div>

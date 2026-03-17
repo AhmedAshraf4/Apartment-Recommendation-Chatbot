@@ -1,4 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from dotenv import load_dotenv
+load_dotenv()
 
 class Settings(BaseSettings):
     openai_api_key: str
@@ -15,6 +17,10 @@ class Settings(BaseSettings):
     admin_password: str = "admin123"
     session_secret: str = "session_secret"
     frontend_origin: str = "http://localhost:5173"
+    langsmith_api_key: str | None = None
+    langsmith_tracking: str | None = None
+    langsmith_project: str | None = None
+    langsmith_workspace_id: str | None = None
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()

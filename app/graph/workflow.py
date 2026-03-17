@@ -1,9 +1,28 @@
 from langgraph.graph import END, START, StateGraph
 from app.graph.state import ChatState
 from app.services.detect_intent import detect_intent
-from app.services.lead_prepare import build_success_reply, build_missing_reply, extract_lead_info, get_missing_fields, merge_lead_data
-from app.services.llm_chatbot import extract_meta, search_apartments, generate_answer, validate_output, merge_recommendations, render_reply
+from app.services.lead_prepare import (
+    build_success_reply,
+    build_missing_reply,
+    extract_lead_info,
+    get_missing_fields,
+    merge_lead_data,
+    stream_missing_reply,
+    stream_success_reply,
+    stream_error_reply,
+    chunk_text,
+)
+from app.services.llm_chatbot import (
+    extract_meta,
+    search_apartments,
+    generate_answer,
+    validate_output,
+    merge_recommendations,
+    render_reply,
+    stream_recommendation_text,
+)
 from app.services.email_gen import send_email
+from langsmith import traceable
 
 
 def detect_intent_node(state):
@@ -25,6 +44,8 @@ def search_node(state):
         "filters": filters,
         "matches": matches,
         "reply": reply,
+        "recommendations": final_output.get("recommendations", []),
+        "company_note": final_output.get("company_note", ""),
     }
 
 
@@ -133,8 +154,77 @@ def build_chat_graph():
 
 chat_graph = build_chat_graph()
 
-
+@traceable(name="run_graph")
 def run_graph(user_query, previous_state=None):
     previous_state = previous_state or {}
     input_state = {**previous_state, "user_query": user_query}
     return chat_graph.invoke(input_state)
+
+@traceable(name="stream_graph")
+def stream_graph(user_query, previous_state=None):
+    previous_state = previous_state or {}
+
+    intent = detect_intent(user_query)
+    state = {**previous_state, "user_query": user_query, "intent": intent}
+
+    # SEARCH FLOW
+    if intent == "search":
+        filters = extract_meta(user_query)
+        matches = search_apartments(user_query, filters, 15)
+
+        state["filters"] = filters
+        state["matches"] = matches
+
+        for chunk in stream_recommendation_text(user_query, matches):
+            yield chunk, state
+        return
+
+    # LEAD FLOW
+    if intent == "lead":
+        existing_lead_data = state.get("lead_data", {})
+        new_lead_data = extract_lead_info(user_query)
+        merged_lead_data = merge_lead_data(existing_lead_data, new_lead_data)
+        missing_fields = get_missing_fields(merged_lead_data)
+
+        state["lead_data"] = merged_lead_data
+        state["missing_fields"] = missing_fields
+
+        if missing_fields:
+            for chunk in stream_missing_reply(merged_lead_data, missing_fields):
+                yield chunk, state
+            return
+
+        lead_data = state.get("lead_data", {})
+        matches = state.get("matches", [])
+
+        apartment_id = str(lead_data.get("apartment_id", "")).lower()
+        apartment = None
+
+        for match in matches:
+            if str(match.get("apartment_id", "")).lower() == apartment_id:
+                apartment = match
+                break
+
+        if apartment is None:
+            error_message = (
+                f"I have all the lead details, but I could not find apartment {apartment_id} "
+                f"in the current session results. Please search for it again, then resend your request."
+            )
+            for chunk in stream_error_reply(error_message):
+                yield chunk, state
+            return
+
+        result = send_email(apartment, lead_data)
+
+        if result.get("success"):
+            for chunk in stream_success_reply(lead_data):
+                yield chunk, state
+        else:
+            for chunk in stream_error_reply(result.get("message", "Failed to send email.")):
+                yield chunk, state
+        return
+
+    # FALLBACK
+    fallback_message = "Sorry, I could not determine how to handle your request."
+    for chunk in chunk_text(fallback_message):
+        yield chunk, state

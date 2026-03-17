@@ -1,10 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-
 from app.api.admin import router as admin_router
 from app.api.chat import router as chat_router
 from app.core.config import settings
+from dotenv import load_dotenv
+load_dotenv()
+
 
 app = FastAPI(title="Dorra Real Estate Assistant", version="0.1.0")
 
