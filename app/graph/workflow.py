@@ -1,4 +1,6 @@
 from langgraph.graph import END, START, StateGraph
+from langsmith import traceable
+
 from app.graph.state import ChatState
 from app.services.detect_intent import detect_intent
 from app.services.lead_prepare import (
@@ -20,14 +22,20 @@ from app.services.llm_chatbot import (
     merge_recommendations,
     render_reply,
     stream_recommendation_text,
+    stream_company_info_text,
+    answer_company_info,
 )
 from app.services.email_gen import send_email
-from langsmith import traceable
 
 
 def detect_intent_node(state):
     user_query = state["user_query"]
-    return {"intent": detect_intent(user_query)}
+    intent_result = detect_intent(user_query)
+
+    return {
+        "intent_result": intent_result,
+        "intent": intent_result.get("intent", "search"),
+    }
 
 
 def search_node(state):
@@ -46,6 +54,16 @@ def search_node(state):
         "reply": reply,
         "recommendations": final_output.get("recommendations", []),
         "company_note": final_output.get("company_note", ""),
+    }
+
+
+@traceable(name="company_info_node")
+def company_info_node(state):
+    user_query = state["user_query"]
+    reply = answer_company_info(user_query)
+
+    return {
+        "reply": reply,
     }
 
 
@@ -98,10 +116,13 @@ def send_lead_node(state):
 
     if result.get("success"):
         reply = build_success_reply(lead_data)
-    else:
-        reply = result.get("message", "Failed to send email.")
+        return {
+            "reply": reply,
+            "lead_data": {},
+            "missing_fields": [],
+        }
 
-    return {"reply": reply}
+    return {"reply": result.get("message", "Failed to send email.")}
 
 
 def route_intent(state):
@@ -120,6 +141,7 @@ def build_chat_graph():
 
     graph.add_node("detect_intent", detect_intent_node)
     graph.add_node("search_and_recommend", search_node)
+    graph.add_node("company_info", company_info_node)
     graph.add_node("extract_lead", get_lead_node)
     graph.add_node("lead_reply", lead_reply_node)
     graph.add_node("send_lead", send_lead_node)
@@ -132,10 +154,12 @@ def build_chat_graph():
         {
             "search": "search_and_recommend",
             "lead": "extract_lead",
+            "company_info": "company_info",
         },
     )
 
     graph.add_edge("search_and_recommend", END)
+    graph.add_edge("company_info", END)
 
     graph.add_conditional_edges(
         "extract_lead",
@@ -154,20 +178,28 @@ def build_chat_graph():
 
 chat_graph = build_chat_graph()
 
+
 @traceable(name="run_graph")
 def run_graph(user_query, previous_state=None):
     previous_state = previous_state or {}
     input_state = {**previous_state, "user_query": user_query}
     return chat_graph.invoke(input_state)
 
+
 @traceable(name="stream_graph")
 def stream_graph(user_query, previous_state=None):
     previous_state = previous_state or {}
 
-    intent = detect_intent(user_query)
-    state = {**previous_state, "user_query": user_query, "intent": intent}
+    intent_result = detect_intent(user_query)
+    intent = intent_result.get("intent", "search")
 
-    # SEARCH FLOW
+    state = {
+        **previous_state,
+        "user_query": user_query,
+        "intent_result": intent_result,
+        "intent": intent,
+    }
+
     if intent == "search":
         filters = extract_meta(user_query)
         matches = search_apartments(user_query, filters, 15)
@@ -179,7 +211,6 @@ def stream_graph(user_query, previous_state=None):
             yield chunk, state
         return
 
-    # LEAD FLOW
     if intent == "lead":
         existing_lead_data = state.get("lead_data", {})
         new_lead_data = extract_lead_info(user_query)
@@ -219,12 +250,19 @@ def stream_graph(user_query, previous_state=None):
         if result.get("success"):
             for chunk in stream_success_reply(lead_data):
                 yield chunk, state
+
+            state["lead_data"] = {}
+            state["missing_fields"] = []
         else:
             for chunk in stream_error_reply(result.get("message", "Failed to send email.")):
                 yield chunk, state
         return
 
-    # FALLBACK
+    if intent == "company_info":
+        for chunk in stream_company_info_text(user_query):
+            yield chunk, state
+        return
+
     fallback_message = "Sorry, I could not determine how to handle your request."
     for chunk in chunk_text(fallback_message):
         yield chunk, state

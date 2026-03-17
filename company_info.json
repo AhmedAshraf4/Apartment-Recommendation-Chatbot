@@ -1,0 +1,118 @@
+{
+  "entity_name": "Dorra Holding / DORRA Group",
+  "aliases": [
+    "Dorra Holding",
+    "DORRA Group",
+    "CRC DORRA",
+    "Dorra Contracting",
+    "DORRA Developments"
+  ],
+  "country": "Egypt",
+  "founded": {
+    "group": 1943,
+    "developments_arm": 1994
+  },
+  "description": "Egyptian private-sector construction and real-estate group with activities spanning contracting, development, engineering, MEP, landscaping, construction technology, and related services.",
+  "business_segments": [
+    "Engineering & Contracting",
+    "Project Management & Consulting",
+    "Construction Chemicals Application & Insulation",
+    "MEP Contracting",
+    "Construction Technologies",
+    "Foundations & Heavy Machinery",
+    "Wood-Working",
+    "Landscaping",
+    "Tourism & Fleet Management",
+    "Real Estate Development"
+  ],
+  "leadership": [
+    {"name": "Hassan Dorra", "role": "Chairman of the Group"},
+    {"name": "Mohamed Dorra", "role": "Vice-Chairman of the Group"},
+    {"name": "Mahmoud El Hussainy", "role": "Operations CEO"},
+    {"name": "Shehab AlSawaby", "role": "Commercial CEO"},
+    {"name": "Malak Dorra", "role": "Executive Committee Member"},
+    {"name": "Omar Dorra", "role": "Managing Director, DORRA Developments"},
+    {"name": "Mohamed Shalaby", "role": "CEO, DORRA Developments (reported in 2024 press coverage)"}
+  ],
+  "scale_claims": {
+    "employees_contracting_site": 35000,
+    "employees_forbes_group_2025": 60000,
+    "projects_completed_forbes_2025": 500,
+    "projects_in_egypt_history_page": 550,
+    "international_branches_forbes_2025": 7
+  },
+  "geographies_mentioned": [
+    "Egypt",
+    "UAE",
+    "Qatar",
+    "Saudi Arabia",
+    "Oman",
+    "Azerbaijan",
+    "Libya"
+  ],
+  "subsidiaries_or_specialist_brands": [
+    "SANO",
+    "Shield",
+    "EEPM",
+    "Pillar Company",
+    "EMCOTECH",
+    "Egyscape/Egyptscape",
+    "Moove"
+  ],
+  "development_projects": [
+    "Village West Apartments",
+    "Village West Villas",
+    "Address East",
+    "The Address",
+    "The Villa",
+    "Capital Business Park",
+    "AIS",
+    "Atrium",
+    "The Courtyard",
+    "Greens",
+    "Silverene Tower",
+    "Plaza Residence",
+    "Dorra Bay",
+    "Ranches"
+  ],
+  "notable_contracting_projects": [
+    "Place Vendome Mall, Qatar",
+    "Four Seasons Hotel and First Mall, Giza",
+    "ENPPI Headquarters",
+    "Faisal Islamic Bank Tower",
+    "The Gate, New Alamein",
+    "Al Maqsad, New Administrative Capital",
+    "MIVIDA parcels",
+    "Palm Hills projects",
+    "New Giza projects"
+  ],
+  "recent_updates": [
+    {
+      "date": "2025-02-27",
+      "event": "CRC Dorra signed second major deal with CIB for ORA's Solana Project"
+    },
+    {
+      "date": "2024-09",
+      "event": "DORRA Developments partnered with JAZ Hotel Group for a luxury hotel in Ranches"
+    },
+    {
+      "date": "2024-06-11",
+      "event": "CRC-Dorra secured Zahra New Alamein construction contract with Morshedy Group"
+    },
+    {
+      "date": "2024-04-20",
+      "event": "Place Vendome Mall contracted scope completed and handed over"
+    }
+  ],
+  "contacts": {
+    "developments_hotline": "16077",
+    "developments_email": "inquiries@dorra.com",
+    "developments_sales_office": "Capital Business Park, Sheikh Zayed, Giza, Egypt",
+    "contracting_hq": "Building K, The Courtyard, Sheikh Zayed, 6th of October, Giza, Egypt"
+  },
+  "confidence_notes": [
+    "The group is private, so public financial data is limited.",
+    "Employee counts differ across sources (35,000 vs 60,000+).",
+    "Leadership titles for DORRA Developments appear inconsistent across sources."
+  ]
+}
