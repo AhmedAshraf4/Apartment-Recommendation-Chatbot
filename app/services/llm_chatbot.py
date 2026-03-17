@@ -1,19 +1,20 @@
 from pathlib import Path
 import json
 import re
-import time
+
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from openai import OpenAI
 from pinecone import Pinecone
 from langsmith import traceable
+from langgraph.config import get_stream_writer
 
 from app.core.config import settings
 
+
 small_context_for_response = """
- Dorra is an Egyptian construction and development group.
-        - Hotline: 16077
-        - Email: info@dorra.com
-        - Location: Courtyard, Building K, Al Shabab Rd, Second Al Sheikh Zayed, Giza Governorate, Egypt.
+Dorra is an Egyptian construction and development group.
+- Hotline: 16077
+- Email: info@dorra.com
+- Location: Courtyard, Building K, Al Shabab Rd, Second Al Sheikh Zayed, Giza Governorate, Egypt.
 """
 
 
@@ -22,8 +23,6 @@ COMPANY_INFO_PATH = BASE_DIR / "company_info.json"
 
 with open(COMPANY_INFO_PATH, "r", encoding="utf-8") as f:
     company_context_json = json.load(f)
-
-openai_client = OpenAI(api_key=settings.openai_api_key)
 
 
 def get_index():
@@ -73,79 +72,78 @@ def extract_meta(user_query):
     )
 
     prompt = f"""
-    You are a strict information-extraction engine for apartment search queries.
+You are a strict information-extraction engine for apartment search queries.
 
-    Your job is to extract only the supported filters from the user query
-    and return exactly one valid JSON object.
+Your job is to extract only the supported filters from the user query
+and return exactly one valid JSON object.
 
-    OUTPUT RULES:
-    - Return JSON only.
-    - Do not add markdown, code fences, comments, or explanations.
-    - Return exactly these keys and no others:
-      "title", "city", "bedrooms", "bathrooms", "min_price", "max_price", "view"
-    - Use null for missing, unclear, or unsupported values.
-    - Prices must be integers in EGP with no commas, symbols, or words.
+OUTPUT RULES:
+- Return JSON only.
+- Do not add markdown, code fences, comments, or explanations.
+- Return exactly these keys and no others:
+  "title", "city", "bedrooms", "bathrooms", "min_price", "max_price", "view"
+- Use null for missing, unclear, or unsupported values.
+- Prices must be integers in EGP with no commas, symbols, or words.
 
-    FIELD RULES:
+FIELD RULES:
 
-    1) title
-    - Extract the property type only if explicitly stated or clearly implied.
-    - Allowed values only:
-      - "apartment"
-      - "studio"
-      - "townhouse"
-      - "penthouse"
-      - "duplex"
-    - If no valid property type is clearly mentioned, return null.
+1) title
+- Extract the property type only if explicitly stated or clearly implied.
+- Allowed values only:
+  - "apartment"
+  - "studio"
+  - "townhouse"
+  - "penthouse"
+  - "duplex"
+- If no valid property type is clearly mentioned, return null.
 
-    2) city
-    - Extract the city only from the query.
-    - Ignore micro-areas, compounds, neighborhoods, and districts.
-    - Keep it short, lowercase, and useful for exact matching.
+2) city
+- Extract the city only from the query.
+- Ignore micro-areas, compounds, neighborhoods, and districts.
+- Keep it short, lowercase, and useful for exact matching.
 
-    3) bedrooms
-    - Extract only when the query clearly asks for an exact bedroom count.
-    - If the query uses comparative language that cannot be represented exactly, return null.
+3) bedrooms
+- Extract only when the query clearly asks for an exact bedroom count.
+- If the query uses comparative language that cannot be represented exactly, return null.
 
-    4) bathrooms
-    - Extract only when the query clearly asks for an exact bathroom count.
-    - If the query uses comparative language that cannot be represented exactly, return null.
+4) bathrooms
+- Extract only when the query clearly asks for an exact bathroom count.
+- If the query uses comparative language that cannot be represented exactly, return null.
 
-    5) price
-    - Interpret prices in EGP.
-    - Convert shorthand into full integers.
-    - If only one side of the range is stated, leave the other side null.
+5) price
+- Interpret prices in EGP.
+- Convert shorthand into full integers.
+- If only one side of the range is stated, leave the other side null.
 
-    6) view
-    - Extract only if explicitly mentioned.
-    - Return a short normalized keyword, not a full phrase.
+6) view
+- Extract only if explicitly mentioned.
+- Return a short normalized keyword, not a full phrase.
 
-    7) unsupported preferences
-    - Ignore anything that is not representable in the schema.
-    - Do not turn these into any filter.
+7) unsupported preferences
+- Ignore anything that is not representable in the schema.
+- Do not turn these into any filter.
 
-    8) no guessing
-    - Do not infer values that are not clearly stated.
-    - Do not guess title, city, price, bedrooms, bathrooms, or view.
+8) no guessing
+- Do not infer values that are not clearly stated.
+- Do not guess title, city, price, bedrooms, bathrooms, or view.
 
-    Return this exact JSON shape:
-    {{
-      "title": null,
-      "city": null,
-      "bedrooms": null,
-      "bathrooms": null,
-      "min_price": null,
-      "max_price": null,
-      "view": null
-    }}
+Return this exact JSON shape:
+{{
+  "title": null,
+  "city": null,
+  "bedrooms": null,
+  "bathrooms": null,
+  "min_price": null,
+  "max_price": null,
+  "view": null
+}}
 
-    User query:
-    {user_query}
-    """.strip()
+User query:
+{user_query}
+""".strip()
 
     response = llm.invoke(prompt)
     content = response.content.strip()
-
     parsed = extract_json_object(content)
     return normalize_filters(parsed)
 
@@ -242,9 +240,6 @@ def search_apartments(user_query, filters, top_k):
 
 
 def format_matches_for_prompt(matches):
-    print("format_matches_for_prompt type:", type(matches))
-    print("format_matches_for_prompt value:", matches)
-
     if not matches:
         return "No apartments were retrieved."
 
@@ -261,18 +256,18 @@ def format_matches_for_prompt(matches):
 
         blocks.append(
             f"""
-            Apartment ID: {match.get("apartment_id")}
-            Title: {match.get("title")}
-            City: {match.get("city")}
-            Area: {match.get("area")}
-            Bedrooms: {match.get("bedrooms")}
-            Bathrooms: {match.get("bathrooms")}
-            Area: {match.get("area_sqm")} sqm
-            View: {match.get("view")}
-            Price: {match.get("price")} EGP
-            Amenities: {match.get("amenities")}
-            Description: {match.get("description")}
-            """.strip()
+Apartment ID: {match.get("apartment_id")}
+Title: {match.get("title")}
+City: {match.get("city")}
+Area: {match.get("area")}
+Bedrooms: {match.get("bedrooms")}
+Bathrooms: {match.get("bathrooms")}
+Area: {match.get("area_sqm")} sqm
+View: {match.get("view")}
+Price: {match.get("price")} EGP
+Amenities: {match.get("amenities")}
+Description: {match.get("description")}
+""".strip()
         )
 
     if not blocks:
@@ -283,9 +278,6 @@ def format_matches_for_prompt(matches):
 
 @traceable(name="generate_answer")
 def generate_answer(user_query, matches):
-    print("generate_answer matches type:", type(matches))
-    print("generate_answer matches value:", matches)
-
     llm = ChatOpenAI(
         model=settings.openai_model,
         api_key=settings.openai_api_key,
@@ -295,38 +287,44 @@ def generate_answer(user_query, matches):
     context = format_matches_for_prompt(matches)
 
     prompt = f"""
-    You are a real-estate recommendation assistant for Dorra.
+You are a real-estate recommendation assistant for Dorra.
 
-    Use only the contexts below.
+Use only the contexts below.
 
-    STRICT RULES:
-    1. Recommend only apartments from Apartment Context.
-    2. Never invent apartment IDs, prices, locations, amenities, or features.
-    3. Every recommendation must include apartment_id exactly as written in Apartment Context.
-    4. Keep the recommendations in the exact same order as the apartments appear in Apartment Context.
-    5. Do not add apartments that are not present in Apartment Context.
-    6. The apartments are already sorted by price from lowest to highest.
-    7. For each apartment, write one short sentence explaining why it may fit the user's request.
-    8. If an apartment from the above does not match the user query, remove it.
+STRICT RULES:
+1. Recommend only apartments from Apartment Context.
+2. Never invent apartment IDs, prices, locations, amenities, or features.
+3. Every recommendation must include apartment_id exactly as written in Apartment Context.
+4. Keep the recommendations in the exact same order as the apartments appear in Apartment Context.
+5. Do not add apartments that are not present in Apartment Context.
+6. The apartments are already sorted by price from lowest to highest.
+7. For each apartment, write one short sentence explaining why it may fit the user's request.
+8. If an apartment from the above does not match the user query, remove it.
 
-    Return JSON only in this exact shape:
+Return JSON only in this exact shape:
+{{
+  "intro": "string",
+  "recommendations": [
     {{
-      "intro": "string",
-      "recommendations": [
-        {{
-          "apartment_id": "string",
-          "fit_reason": "string"
-        }}
-      ],
-      "company_note": "string"
+      "apartment_id": "string",
+      "fit_reason": "string"
     }}
+  ],
+  "company_note": "string"
+}}
 
-    User query:
-    {user_query}
+Writing rules:
+- "intro" should briefly say that the apartments are sorted by price from lowest to highest.
+- "fit_reason" should be one short, user-friendly sentence.
+- Base each fit_reason only on the user query and the actual apartment details.
+- If no apartments are suitable, return an empty recommendations list and explain that in "intro".
 
-    Apartment Context:
-    {context}
-    """.strip()
+User query:
+{user_query}
+
+Apartment Context:
+{context}
+""".strip()
 
     response = llm.invoke(prompt)
     content = response.content.strip()
@@ -339,6 +337,7 @@ def generate_answer(user_query, matches):
         }
 
     return parsed
+
 
 @traceable(name="validate_output")
 def validate_output(output_data, matches):
@@ -416,8 +415,8 @@ def render_reply(final_output):
         sections.append(intro)
 
     for i, rec in enumerate(recommendations, start=1):
-        bedrooms = int(rec.get("bedrooms"))
-        bathrooms = int(rec.get("bathrooms"))
+        bedrooms = rec.get("bedrooms")
+        bathrooms = rec.get("bathrooms")
 
         section = (
             f"{i}. ID: {rec.get('apartment_id', '')}\n"
@@ -440,99 +439,40 @@ def render_reply(final_output):
     return "\n\n".join(sections).strip()
 
 
-def render_one_recommendation(index, rec):
-    bedrooms = rec.get("bedrooms")
-    bathrooms = rec.get("bathrooms")
+@traceable(name="company_info_stream_to_writer")
+def company_info_stream_to_writer(user_query: str) -> str:
+    writer = get_stream_writer()
 
-    return (
-        f"{index}. ID: {rec.get('apartment_id', '')}\n"
-        f"   Type: {rec.get('title', 'Property').title()}\n"
-        f"   Price: {rec.get('price', 'N/A')} EGP\n"
-        f"   Location: {rec.get('city', 'N/A')} - {rec.get('area', 'N/A')}\n"
-        f"   Specs: {bedrooms if bedrooms is not None else 'N/A'} bedrooms, "
-        f"{bathrooms if bathrooms is not None else 'N/A'} bathrooms, "
-        f"{rec.get('area_sqm', 'N/A')} sqm\n"
-        f"   Amenities: {rec.get('amenities', 'N/A')}\n"
-        f"   Description: {rec.get('description', 'N/A')}\n"
-        f"   View: {rec.get('view', 'N/A')}\n"
-        f"   Why it may fit you: {rec.get('fit_reason', 'This may fit your request based on the retrieved details.')}\n\n"
-    )
-
-
-def chunk_text(text, chunk_size):
-    text = text or ""
-    for i in range(0, len(text), chunk_size):
-        yield text[i:i + chunk_size]
-        time.sleep(0.03)
-
-
-def stream_recommendation_text(user_query, matches):
-    yield "Thinking...\n\n"
-
-    final_out = build_final_output(user_query, matches)
-
-    intro = final_out.get("intro", "").strip()
-    if intro:
-        yield intro + "\n\n"
-
-    recommendations = final_out.get("recommendations", [])
-    if not recommendations:
-        yield "No matching apartment was found in the dataset.\n\n"
-    else:
-        for i, rec in enumerate(recommendations, start=1):
-            block = render_one_recommendation(i, rec)
-            for piece in chunk_text(block, 18):
-                yield piece
-
-    company_note = final_out.get("company_note", "").strip()
-    if company_note:
-        for piece in chunk_text(f"About Dorra: {company_note}", 18):
-            yield piece
-
-@traceable(name="stream_recommendation_text")
-def stream_company_info_text(user_query):
-    prompt = f"""
-        You are a helpful assistant for Dorra.
-    
-        Answer only using the company information below.
-        Do not invent facts.
-        If something is not in the company information, say that clearly.
-        Keep the answer concise and natural.
-        
-        Company information:
-        {company_context_json}
-        
-        User question:
-        {user_query}
-        """.strip()
-
-    stream = openai_client.responses.create(
+    llm = ChatOpenAI(
         model=settings.openai_model,
-        input=prompt,
-        stream=True,
+        api_key=settings.openai_api_key,
+        temperature=0.2,
     )
 
-    for event in stream:
-        if event.type == "response.output_text.delta":
-            yield event.delta
+    prompt = f"""
+You are a helpful assistant for Dorra.
 
+Answer only using the company information below.
+Do not invent facts.
+If something is not in the company information, say that clearly.
+Write a natural user-facing answer.
 
-def answer_company_info(user_query):
-    chunks = []
-    for chunk in stream_company_info_text(user_query):
-        chunks.append(chunk)
-    return "".join(chunks).strip()
+Company information:
+{json.dumps(company_context_json, ensure_ascii=False, indent=2)}
 
+User question:
+{user_query}
+""".strip()
 
-def run_chat(user_query):
-    filters = extract_meta(user_query)
-    matches = search_apartments(user_query, filters, 15)
-    final_out = build_final_output(user_query, matches)
+    collected = []
 
-    reply = render_reply(final_out)
+    for chunk in llm.stream(prompt):
+        text = chunk.content or ""
+        if not isinstance(text, str):
+            text = str(text)
 
-    return {
-        "reply": reply,
-        "recommendations": final_out.get("recommendations", []),
-        "company_note": final_out.get("company_note", ""),
-    }
+        if text:
+            collected.append(text)
+            writer(text)
+
+    return "".join(collected).strip()
