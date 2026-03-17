@@ -7,7 +7,8 @@ def build_pine_text(apartment):
     return f"""
 Apartment ID: {apartment["apartment_id"]}
 Title: {apartment["title"]}
-Location: {apartment["location"]}
+city: {apartment["city"]}
+area: {apartment["area"]}
 Bedrooms: {apartment["bedrooms"]}
 Bathrooms: {apartment["bathrooms"]}
 Area: {apartment["area_sqm"]} sqm
@@ -40,7 +41,8 @@ def create_metadata(apartment):
     return {
         "apartment_id": apartment["apartment_id"],
         "title": apartment["title"],
-        "location": apartment["location"],
+        "city": apartment["city"],
+        "area": apartment["area"],
         "bedrooms": apartment["bedrooms"],
         "bathrooms": apartment["bathrooms"],
         "area_sqm": apartment["area_sqm"],

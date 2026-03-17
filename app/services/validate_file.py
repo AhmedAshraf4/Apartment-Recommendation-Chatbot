@@ -3,7 +3,7 @@ import re
 import pandas as pd
 from fastapi import HTTPException
 
-txt_columns = ["apartment_id", "title", "location", "view", "amenities", "description", "agent_email"]
+txt_columns = ["apartment_id", "title", "city", "area", "view", "amenities", "description", "agent_email"]
 num_columns = ["bedrooms", "bathrooms", "area_sqm", "price"]
 req_columns = txt_columns + num_columns
 
@@ -70,7 +70,8 @@ def clean(df):
     for col in txt_columns:
         df[col] = df[col].apply(norm)
     df["amenities"] = df["amenities"].apply(norm_amen)
-    df["location"] = df["location"].apply(norm_general)
+    df["city"] = df["city"].apply(norm_general)
+    df["area"] = df["area"].apply(norm_general)
     df["view"] = df["view"].apply(norm_general)
     df = df.drop_duplicates(subset=["apartment_id"], keep="first")
 
@@ -115,7 +116,8 @@ def val_rows(df):
         apartment = {
             "apartment_id": row["apartment_id"],
             "title": row["title"],
-            "location": row["location"],
+            "city": row["city"],
+            "area": row["area"],
             "bedrooms": int(row["bedrooms"]),
             "bathrooms": int(row["bathrooms"]),
             "area_sqm": float(row["area_sqm"]),
