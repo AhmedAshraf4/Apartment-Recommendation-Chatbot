@@ -40,8 +40,6 @@ This project includes:
 
 ## Table of Contents
 
-- [Live Demo](#live-demo)
-- [Demo Used](#demo-used)
 - [Tech Stack](#tech-stack)
 - [Core Features](#core-features)
 - [Supported Intents](#supported-intents)
@@ -639,7 +637,6 @@ graph TD
     start --> detect_intent
 
     company_info --> finish
-    lead_reply -. missing .-> lead_reply
     lead_reply --> finish
     search_and_recommend --> finish
     send_lead --> finish
