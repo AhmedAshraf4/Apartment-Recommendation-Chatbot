@@ -1,12 +1,22 @@
 import json
 import re
 from langchain_openai import ChatOpenAI
-from app.core.config import settings
-import time
 from langsmith import traceable
+from app.core.config import settings
 
+def empty_lead():
+    return {
+        "apartment_id": None,
+        "name": None,
+        "phone": None,
+        "email": None,
+        "preferred_contact_time": None,
+    }
 
-def extract_json(text):
+def parse_json(text):
+    if not text or not isinstance(text, str):
+        return None
+
     text = text.strip()
 
     try:
@@ -23,11 +33,12 @@ def extract_json(text):
 
     return None
 
+
 @traceable(name="extract_lead_info")
 def extract_lead_info(user_query):
     llm = ChatOpenAI(
         model=settings.openai_model,
-        api_key=settings.openai_api_key
+        api_key=settings.openai_api_key,
     )
 
     prompt = f"""
@@ -48,71 +59,18 @@ def extract_lead_info(user_query):
     - Use null for missing values.
     - Do not invent any values.
     - If the user mentions an apartment id like ap003, ph005, th002, extract it exactly in lowercase.
-    - preferred_contact_time should be a short natural phrase taken from the user's message, such as:
-      - "tomorrow morning"
-      - "after 6 pm"
-      - "in the evening"
-      - "weekends"
-      - "anytime"
+    - preferred_contact_time should be a short natural phrase taken from the user's message.
     - If the user message does not contain a field, leave it null.
-
-    Examples:
-
-    User: I am interested in ap003
-    Output:
-    {{
-      "apartment_id": "ap003",
-      "name": null,
-      "phone": null,
-      "email": null,
-      "preferred_contact_time": null
-    }}
-
-    User: My name is Ahmed Ashraf
-    Output:
-    {{
-      "apartment_id": null,
-      "name": "Ahmed Ashraf",
-      "phone": null,
-      "email": null,
-      "preferred_contact_time": null
-    }}
-
-    User: My phone is 01012345678 and my email is ahmed@example.com
-    Output:
-    {{
-      "apartment_id": null,
-      "name": null,
-      "phone": "01012345678",
-      "email": "ahmed@example.com",
-      "preferred_contact_time": null
-    }}
-
-    User: Please contact me after 6 pm
-    Output:
-    {{
-      "apartment_id": null,
-      "name": null,
-      "phone": null,
-      "email": null,
-      "preferred_contact_time": "after 6 pm"
-    }}
 
     User message:
     {user_query}
     """.strip()
 
     response = llm.invoke(prompt)
-    parsed = extract_json(response.content)
+    parsed = parse_json(response.content)
 
     if not isinstance(parsed, dict):
-        return {
-            "apartment_id": None,
-            "name": None,
-            "phone": None,
-            "email": None,
-            "preferred_contact_time": None,
-        }
+        return empty_lead()
 
     return {
         "apartment_id": parsed.get("apartment_id"),
@@ -136,9 +94,9 @@ def merge_lead_data(existing, new_data):
         "preferred_contact_time": existing.get("preferred_contact_time"),
     }
 
-    for key in merged.keys():
+    for key in merged:
         value = new_data.get(key)
-        if value is not None and str(value).strip() != "":
+        if value is not None and str(value).strip():
             merged[key] = str(value).strip()
 
     if merged.get("apartment_id"):
@@ -164,14 +122,14 @@ def build_missing_reply(lead_data, missing_fields):
         "preferred_contact_time": "preferred contact time",
     }
 
-    readable = [labels[field] for field in missing_fields]
+    readable_fields = [labels[field] for field in missing_fields]
 
-    if len(readable) == 1:
-        fields_text = readable[0]
-    elif len(readable) == 2:
-        fields_text = f"{readable[0]} and {readable[1]}"
+    if len(readable_fields) == 1:
+        fields_text = readable_fields[0]
+    elif len(readable_fields) == 2:
+        fields_text = f"{readable_fields[0]} and {readable_fields[1]}"
     else:
-        fields_text = ", ".join(readable[:-1]) + f", and {readable[-1]}"
+        fields_text = ", ".join(readable_fields[:-1]) + f", and {readable_fields[-1]}"
 
     if apartment_id:
         return f"To continue with apartment {apartment_id}, please share your {fields_text}."
@@ -187,24 +145,3 @@ def build_success_reply(lead_data):
         f"Thanks, I now have all the needed details for apartment {apartment_id}. "
         f"I’m going to send your request to the responsible agent by email, and I’ll include that your preferred contact time is {preferred_contact_time}."
     )
-
-
-def chunk_text(text, chunk_size=18):
-    text = text or ""
-    for i in range(0, len(text), chunk_size):
-        yield text[i:i + chunk_size]
-        time.sleep(0.03)
-
-
-def stream_missing_reply(lead_data, missing_fields, chunk_size=18):
-    reply = build_missing_reply(lead_data, missing_fields)
-    yield from chunk_text(reply, chunk_size)
-
-
-def stream_success_reply(lead_data, chunk_size=18):
-    reply = build_success_reply(lead_data)
-    yield from chunk_text(reply, chunk_size)
-
-
-def stream_error_reply(message, chunk_size=18):
-    yield from chunk_text(message, chunk_size)

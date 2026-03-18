@@ -1,12 +1,10 @@
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
-
 from app.core.config import settings
-from app.services.validate_file import parse_and_val
-from app.services.index_file import index_data
+from app.services.validate_preprocess_data import parse_and_validate
+from app.services.index_gen import index_data
 
 router = APIRouter(prefix="/admin", tags=["admin"])
-
 
 class AdminLoginRequest(BaseModel):
     username: str
@@ -15,14 +13,10 @@ class AdminLoginRequest(BaseModel):
 def require_admin(request: Request):
     if not request.session.get("is_admin"):
         raise HTTPException(status_code=401, detail="Admin login required")
-    return True
 
 @router.post("/login")
 async def admin_login(payload: AdminLoginRequest, request: Request):
-    if (
-        payload.username != settings.admin_username
-        or payload.password != settings.admin_password
-    ):
+    if payload.username != settings.admin_username or payload.password != settings.admin_password:
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     request.session.clear()
@@ -49,19 +43,21 @@ async def admin_logout(request: Request):
     request.session.clear()
     return {"authenticated": False}
 
+
 @router.post("/upload")
 async def upload_apartments(
     file: UploadFile = File(...),
-    _: bool = Depends(require_admin),
+    _: None = Depends(require_admin),
 ):
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(
             status_code=400,
             detail="Please upload an Excel file (.xlsx or .xls)",
         )
+
     file_bytes = await file.read()
-    apartments = parse_and_val(file_bytes)
-    indexed_count = index_data(apartments)
+    apartments = parse_and_validate(file_bytes)
+    index_data(apartments)
 
     return {
         "message": "Excel uploaded, validated, and indexed successfully",

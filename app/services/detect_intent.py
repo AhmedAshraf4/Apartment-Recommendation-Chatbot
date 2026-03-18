@@ -3,21 +3,13 @@ import re
 from langchain_openai import ChatOpenAI
 from app.core.config import settings
 
+llm = ChatOpenAI(model=settings.openai_model,api_key=settings.openai_api_key,temperature=0)
 
-llm = ChatOpenAI(
-    model=settings.openai_model,
-    api_key=settings.openai_api_key,
-    temperature=0,
-)
-
-
-def extract_json(text: str):
-    if not isinstance(text, str):
+def parse_json(text: str):
+    if not text or not isinstance(text, str):
         return None
 
     text = text.strip()
-    if not text:
-        return None
 
     try:
         return json.loads(text)
@@ -34,106 +26,97 @@ def extract_json(text: str):
     return None
 
 
-def normalize_response_content(response):
-    if response is None:
-        return None
-
-    content = getattr(response, "content", None)
-
-    if isinstance(content, str):
-        return content
-
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, dict):
-                text = item.get("text")
-                if text:
-                    parts.append(text)
-            elif isinstance(item, str):
-                parts.append(item)
-        return "\n".join(parts).strip() if parts else None
-
-    text = getattr(response, "text", None)
-    if isinstance(text, str):
-        return text
-
-    return str(content) if content is not None else None
-
-
 def detect_intent(user_query: str):
     prompt = f"""
-You are an intent classifier for a real-estate assistant.
+    You are an intent classifier for a real-estate assistant.
 
-Classify the user's message into exactly one of these intents:
-- "search"
-- "lead"
-- "company_info"
+    Classify the user's message into exactly one of these intents:
+    - "search"
+    - "lead"
+    - "company_info"
+    - "unsupported"
 
-Intent definitions:
-- "search": the user wants apartments/properties, recommendations, listings, or is filtering by city, area, budget, bedrooms, bathrooms, title, compound, or view.
-- "lead": the user shows interest in a specific property, asks to be contacted, shares phone/email/name, requests a callback, asks to book/view/visit, or continues a contact/lead flow.
-- "company_info": the user asks about Dorra itself, such as company background, developers, projects, branches, offices, hotline, contact channels, email, website, or general company information.
+    Intent definitions:
+    - "search": the user wants apartments/properties, recommendations, listings, or is filtering by city, area, budget, bedrooms, bathrooms, title, compound, view, or sorting like cheapest first / highest price / biggest area / smallest area.
+    - "lead": the user shows interest in a specific property, asks to be contacted, shares phone/email/name, requests a callback, asks to book/view/visit, or continues a contact/lead flow.
+    - "company_info": the user asks about Dorra itself, such as company background, developers, projects, branches, offices, hotline, contact channels, email, website, or general company information.
+    - "unsupported": anything outside those categories.
 
-Important rules:
-- Return exactly one intent.
-- Return valid JSON only.
-- Do not include markdown fences.
-- Do not include explanations.
-- Do not include any text before or after the JSON.
-- The output must match this exact schema:
-{{"intent":"search"}}
+    Important rules:
+    - Return exactly one intent.
+    - Return valid JSON only.
+    - Do not include markdown fences.
+    - Do not include explanations.
+    - Do not include any text before or after the JSON.
+    - The output must match this exact schema:
+    {{"intent":"search"}}
 
-Examples:
+    Examples:
 
-User: I need a 3-bedroom apartment in New Cairo
-Output:
-{{"intent":"search"}}
+    User: I need a 3-bedroom apartment in New Cairo
+    Output:
+    {{"intent":"search"}}
 
-User: Show me apartments under 8 million in Sheikh Zayed
-Output:
-{{"intent":"search"}}
+    User: Show me apartments under 8 million in Sheikh Zayed
+    Output:
+    {{"intent":"search"}}
 
-User: I am interested in ap003
-Output:
-{{"intent":"lead"}}
+    User: Show me apartments in October, cheapest first
+    Output:
+    {{"intent":"search"}}
 
-User: My phone is 01012345678
-Output:
-{{"intent":"lead"}}
+    User: I want a townhouse sorted by area descending
+    Output:
+    {{"intent":"search"}}
 
-User: Please call me tomorrow
-Output:
-{{"intent":"lead"}}
+    User: I am interested in ap003
+    Output:
+    {{"intent":"lead"}}
 
-User: Tell me about Dorra
-Output:
-{{"intent":"company_info"}}
+    User: My phone is 01012345678
+    Output:
+    {{"intent":"lead"}}
 
-User: What is Dorra's hotline?
-Output:
-{{"intent":"company_info"}}
+    User: Please call me tomorrow
+    Output:
+    {{"intent":"lead"}}
 
-Now classify this user message.
+    User: Tell me about Dorra
+    Output:
+    {{"intent":"company_info"}}
 
-User: {user_query}
-Output:
-""".strip()
+    User: What is Dorra's hotline?
+    Output:
+    {{"intent":"company_info"}}
+
+    User: What is the weather today?
+    Output:
+    {{"intent":"unsupported"}}
+
+    User: Write me a poem
+    Output:
+    {{"intent":"unsupported"}}
+
+    Now classify this user message.
+
+    User: {user_query}
+    Output:
+    """.strip()
 
     try:
         response = llm.invoke(prompt)
+        raw_text = response.content if isinstance(response.content, str) else str(response.content)
     except Exception:
-        return {"intent": "search"}
+        return {"intent": "unsupported"}
 
-    raw_text = normalize_response_content(response)
-    parsed = extract_json(raw_text)
+    parsed = parse_json(raw_text)
 
     if not isinstance(parsed, dict):
-        return {"intent": "search"}
+        return {"intent": "unsupported"}
 
-    intent = str(parsed.get("intent", "search")).strip().lower()
+    intent = str(parsed.get("intent", "unsupported")).strip().lower()
 
     if intent not in {"search", "lead", "company_info"}:
-        intent = "search"
+        intent = "unsupported"
 
     return {"intent": intent}

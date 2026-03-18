@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { apiRequest } from "../api";
 import PageHeader from "../components/PageHeader";
 
@@ -8,27 +8,27 @@ export default function AdminLoginPage() {
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [checking, setChecking] = useState(true);
-  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
-    async function checkAuth() {
+    const verifySession = async () => {
       try {
         await apiRequest("/admin/me");
         navigate("/admin/upload");
       } catch {
-        setChecking(false);
+        setIsCheckingSession(false);
       }
-    }
+    };
 
-    checkAuth();
+    verifySession();
   }, [navigate]);
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setLoading(true);
-    setError("");
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setIsSubmitting(true);
+    setErrorMessage("");
 
     try {
       await apiRequest("/admin/login", {
@@ -36,18 +36,21 @@ export default function AdminLoginPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({
+          username,
+          password,
+        }),
       });
 
       navigate("/admin/upload");
-    } catch (err) {
-      setError(err.message || "Login failed");
+    } catch (error) {
+      setErrorMessage(error.message || "Login failed");
     } finally {
-      setLoading(false);
+      setIsSubmitting(false);
     }
-  }
+  };
 
-  if (checking) {
+  if (isCheckingSession) {
     return <div className="page centered">Checking session...</div>;
   }
 
@@ -63,12 +66,12 @@ export default function AdminLoginPage() {
           <h2>Sign in</h2>
           <p className="muted">Authorized admin access only</p>
 
-          <form onSubmit={handleSubmit} className="form">
+          <form className="form" onSubmit={handleSubmit}>
             <label>Username</label>
             <input
               type="text"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={(event) => setUsername(event.target.value)}
               placeholder="Enter username"
               required
             />
@@ -77,15 +80,19 @@ export default function AdminLoginPage() {
             <input
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(event) => setPassword(event.target.value)}
               placeholder="Enter password"
               required
             />
 
-            {error && <div className="error-box">{error}</div>}
+            {errorMessage && <div className="error-box">{errorMessage}</div>}
 
-            <button className="btn btn-primary full" type="submit" disabled={loading}>
-              {loading ? "Logging in..." : "Login"}
+            <button
+              className="btn btn-primary full"
+              type="submit"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? "Logging in..." : "Login"}
             </button>
           </form>
 

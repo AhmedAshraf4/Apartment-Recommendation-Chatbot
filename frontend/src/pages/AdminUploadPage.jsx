@@ -1,63 +1,63 @@
 import { useEffect, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { apiRequest } from "../api";
 import PageHeader from "../components/PageHeader";
 
 export default function AdminUploadPage() {
   const navigate = useNavigate();
 
-  const [checking, setChecking] = useState(true);
-  const [file, setFile] = useState(null);
-  const [uploading, setUploading] = useState(false);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
-  const [result, setResult] = useState(null);
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [uploadResult, setUploadResult] = useState(null);
 
   useEffect(() => {
-    async function checkAuth() {
+    const verifyAdminSession = async () => {
       try {
         await apiRequest("/admin/me");
-        setChecking(false);
+        setIsCheckingSession(false);
       } catch {
         navigate("/admin/login");
       }
-    }
+    };
 
-    checkAuth();
+    verifyAdminSession();
   }, [navigate]);
 
-  async function handleUpload(e) {
-    e.preventDefault();
+  const handleUpload = async (event) => {
+    event.preventDefault();
 
-    if (!file) {
-      setError("Please select an Excel file.");
+    if (!selectedFile) {
+      setErrorMessage("Please select an Excel file.");
       return;
     }
 
-    setUploading(true);
-    setError("");
-    setMessage("");
-    setResult(null);
+    setIsUploading(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    setUploadResult(null);
 
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("file", selectedFile);
 
     try {
-      const data = await apiRequest("/admin/upload", {
+      const response = await apiRequest("/admin/upload", {
         method: "POST",
         body: formData,
       });
 
-      setResult(data);
-      setMessage("Upload completed successfully.");
-    } catch (err) {
-      setError(err.message || "Upload failed");
+      setUploadResult(response);
+      setSuccessMessage("Upload completed successfully.");
+    } catch (error) {
+      setErrorMessage(error.message || "Upload failed");
     } finally {
-      setUploading(false);
+      setIsUploading(false);
     }
-  }
+  };
 
-  async function handleLogout() {
+  const handleLogout = async () => {
     try {
       await apiRequest("/admin/logout", {
         method: "POST",
@@ -65,9 +65,9 @@ export default function AdminUploadPage() {
     } finally {
       navigate("/admin/login");
     }
-  }
+  };
 
-  if (checking) {
+  if (isCheckingSession) {
     return <div className="page centered">Checking session...</div>;
   }
 
@@ -91,32 +91,38 @@ export default function AdminUploadPage() {
       </div>
 
       <div className="upload-card">
-        <form onSubmit={handleUpload} className="form">
+        <form className="form" onSubmit={handleUpload}>
           <label>Excel File</label>
           <input
             type="file"
             accept=".xlsx,.xls"
-            onChange={(e) => setFile(e.target.files?.[0] || null)}
+            onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
             required
           />
 
-          {message && <div className="success-box">{message}</div>}
-          {error && <div className="error-box">{error}</div>}
+          {successMessage && <div className="success-box">{successMessage}</div>}
+          {errorMessage && <div className="error-box">{errorMessage}</div>}
 
-          <button className="btn btn-primary" type="submit" disabled={uploading}>
-            {uploading ? "Uploading..." : "Upload File"}
+          <button className="btn btn-primary" type="submit" disabled={isUploading}>
+            {isUploading ? "Uploading..." : "Upload File"}
           </button>
         </form>
 
-        {result && (
+        {uploadResult && (
           <div className="result-card">
             <h2>Upload Result</h2>
-            <p><strong>Message:</strong> {result.message}</p>
-            {"apartments_count" in result && (
-              <p><strong>Apartments Count:</strong> {result.apartments_count}</p>
+            <p>
+              <strong>Message:</strong> {uploadResult.message}
+            </p>
+            {"apartments_count" in uploadResult && (
+              <p>
+                <strong>Apartments Count:</strong> {uploadResult.apartments_count}
+              </p>
             )}
-            {"indexed_count" in result && (
-              <p><strong>Indexed Count:</strong> {result.indexed_count}</p>
+            {"indexed_count" in uploadResult && (
+              <p>
+                <strong>Indexed Count:</strong> {uploadResult.indexed_count}
+              </p>
             )}
           </div>
         )}

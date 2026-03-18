@@ -5,7 +5,7 @@ import time
 from app.graph.workflow import chat_graph
 
 router = APIRouter(prefix="/chat", tags=["chat"])
-session_mem = {}
+session_store = {}
 
 
 class ChatRequest(BaseModel):
@@ -13,54 +13,60 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
 
 
+def split_for_typing_effect(text, size=18):
+    text = text or ""
+    for i in range(0, len(text), size):
+        yield text[i:i + size]
+
+
 @router.post("/stream")
-async def chat_stream(payload: ChatRequest):
-    session_id = payload.session_id.strip()
-    message = payload.message.strip()
+async def chat_stream(request_data: ChatRequest):
+    session_id = request_data.session_id.strip()
+    user_message = request_data.message.strip()
 
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id cannot be empty")
-    if not message:
+
+    if not user_message:
         raise HTTPException(status_code=400, detail="message cannot be empty")
 
-    previous_state = session_mem.get(session_id, {})
-    input_state = {**previous_state, "user_query": message}
+    saved_state = session_store.get(session_id, {})
+    chat_state = {**saved_state, "user_query": user_message}
 
-    def chunk_text_for_ui(text, chunk_size=18):
-        text = text or ""
-        for i in range(0, len(text), chunk_size):
-            yield text[i:i + chunk_size]
-
-    def generate():
-        latest_state = dict(input_state)
+    def stream_response():
+        final_state = dict(chat_state)
 
         try:
-            for mode, chunk in chat_graph.stream(
-                    input_state,
-                    stream_mode=["updates", "custom"],
+            for stream_type, stream_data in chat_graph.stream(
+                chat_state,
+                stream_mode=["updates", "custom"],
             ):
-                if mode == "custom":
-                    if chunk:
-                        yield chunk
+                if stream_type == "custom":
+                    if stream_data:
+                        yield stream_data
+                    continue
 
-                elif mode == "updates":
-                    for _, node_update in chunk.items():
-                        if not isinstance(node_update, dict):
-                            continue
+                if stream_type != "updates":
+                    continue
 
-                        latest_state.update(node_update)
+                for _, state_change in stream_data.items():
+                    if not isinstance(state_change, dict):
+                        continue
 
-                        stream_text = node_update.get("stream_text") or node_update.get("reply")
-                        intent = latest_state.get("intent")
+                    final_state.update(state_change)
 
-                        if stream_text and intent != "company_info":
-                            for piece in chunk_text_for_ui(stream_text, 18):
-                                yield piece
-                                time.sleep(0.03)
+                    message_text = state_change.get("stream_text") or state_change.get("reply")
+                    current_intent = final_state.get("intent")
+
+                    if message_text and current_intent != "company_info":
+                        for piece in split_for_typing_effect(message_text, 18):
+                            yield piece
+                            time.sleep(0.03)
         finally:
-            session_mem[session_id] = latest_state
+            session_store[session_id] = final_state
+
     return StreamingResponse(
-        generate(),
+        stream_response(),
         media_type="text/plain",
         headers={
             "Cache-Control": "no-cache",

@@ -2,12 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import PageHeader from "../components/PageHeader";
 import { API_BASE } from "../api";
 
-function generateSessionId() {
+function createSessionId() {
   return `session_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export default function UserPage() {
-  const sessionId = useMemo(() => generateSessionId(), []);
+  const sessionId = useMemo(() => createSessionId(), []);
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
 
@@ -18,27 +18,29 @@ export default function UserPage() {
         "Welcome to Dorra Real Estate Assistant. Tell me what kind of property you’re looking for, and I’ll help you find matching options.",
     },
   ]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [inputValue, setInputValue] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  async function handleSend(e) {
-    e.preventDefault();
+  const handleSend = async (event) => {
+    event.preventDefault();
 
-    const message = input.trim();
-    if (!message || loading) return;
+    const trimmedMessage = inputValue.trim();
+    if (!trimmedMessage || isLoading) {
+      return;
+    }
 
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", content: message },
+    setMessages((currentMessages) => [
+      ...currentMessages,
+      { role: "user", content: trimmedMessage },
       { role: "assistant", content: "Thinking..." },
     ]);
 
-    setInput("");
-    setLoading(true);
+    setInputValue("");
+    setIsLoading(true);
 
     try {
       const response = await fetch(`${API_BASE}/chat/stream`, {
@@ -48,17 +50,19 @@ export default function UserPage() {
         },
         body: JSON.stringify({
           session_id: sessionId,
-          message,
+          message: trimmedMessage,
         }),
         credentials: "include",
       });
 
       if (!response.ok) {
         let errorMessage = "Something went wrong while contacting the server.";
+
         try {
           const data = await response.json();
           errorMessage = data.detail || errorMessage;
         } catch {}
+
         throw new Error(errorMessage);
       }
 
@@ -68,49 +72,51 @@ export default function UserPage() {
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      let fullText = "";
+      let streamedText = "";
 
       while (true) {
         const { value, done } = await reader.read();
-        if (done) break;
+        if (done) {
+          break;
+        }
 
         const chunk = decoder.decode(value, { stream: true });
-        fullText += chunk;
+        streamedText += chunk;
 
-        setMessages((prev) => {
-          const updated = [...prev];
-          updated[updated.length - 1] = {
+        setMessages((currentMessages) => {
+          const nextMessages = [...currentMessages];
+          nextMessages[nextMessages.length - 1] = {
             role: "assistant",
-            content: fullText,
+            content: streamedText,
           };
-          return updated;
+          return nextMessages;
         });
       }
 
-      if (!fullText.trim()) {
-        setMessages((prev) => {
-          const updated = [...prev];
-          updated[updated.length - 1] = {
+      if (!streamedText.trim()) {
+        setMessages((currentMessages) => {
+          const nextMessages = [...currentMessages];
+          nextMessages[nextMessages.length - 1] = {
             role: "assistant",
             content: "Sorry, I couldn’t generate a response.",
           };
-          return updated;
+          return nextMessages;
         });
       }
-    } catch (err) {
-      setMessages((prev) => {
-        const updated = [...prev];
-        updated[updated.length - 1] = {
+    } catch (error) {
+      setMessages((currentMessages) => {
+        const nextMessages = [...currentMessages];
+        nextMessages[nextMessages.length - 1] = {
           role: "assistant",
           content:
-            err.message || "Something went wrong while contacting the server.",
+            error.message || "Something went wrong while contacting the server.",
         };
-        return updated;
+        return nextMessages;
       });
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
-  }
+  };
 
   return (
     <div className="page">
@@ -122,38 +128,40 @@ export default function UserPage() {
       <div className="chat-page">
         <div className="chat-card">
           <div className="chat-messages" ref={messagesContainerRef}>
-            {messages.map((msg, index) => (
+            {messages.map((message, index) => (
               <div
                 key={index}
                 className={`chat-bubble ${
-                  msg.role === "user"
+                  message.role === "user"
                     ? "chat-bubble--user"
                     : "chat-bubble--assistant"
                 }`}
               >
                 <div className="chat-bubble__label">
-                  {msg.role === "user" ? "You" : "Assistant"}
+                  {message.role === "user" ? "You" : "Assistant"}
                 </div>
+
                 <div className="chat-bubble__content">
-                  {msg.content}
-                  {loading && index === messages.length - 1 && (
+                  {message.content}
+                  {isLoading && index === messages.length - 1 && (
                     <span className="typing-cursor"></span>
                   )}
                 </div>
               </div>
             ))}
+
             <div ref={messagesEndRef} />
           </div>
 
           <form className="chat-input-area" onSubmit={handleSend}>
             <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
+              value={inputValue}
+              onChange={(event) => setInputValue(event.target.value)}
               placeholder="Describe the property you want..."
               rows={3}
             />
-            <button className="btn btn-primary" type="submit" disabled={loading}>
-              {loading ? "Streaming..." : "Send"}
+            <button className="btn btn-primary" type="submit" disabled={isLoading}>
+              {isLoading ? "Streaming..." : "Send"}
             </button>
           </form>
         </div>

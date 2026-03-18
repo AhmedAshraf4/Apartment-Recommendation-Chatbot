@@ -21,17 +21,22 @@ Dorra is an Egyptian construction and development group.
 BASE_DIR = Path(__file__).resolve().parents[2]
 COMPANY_INFO_PATH = BASE_DIR / "company_info.json"
 
-with open(COMPANY_INFO_PATH, "r", encoding="utf-8") as f:
-    company_context_json = json.load(f)
+with open(COMPANY_INFO_PATH, "r", encoding="utf-8") as file:
+    company_info = json.load(file)
 
 
 def get_index():
-    pc = Pinecone(api_key=settings.pinecone_api_key)
-    return pc.Index(settings.pinecone_index_name)
+    pinecone = Pinecone(api_key=settings.pinecone_api_key)
+    return pinecone.Index(settings.pinecone_index_name)
 
 
-def extract_json_object(text):
+def parse_json(text):
+    if not isinstance(text, str):
+        return None
+
     text = text.strip()
+    if not text:
+        return None
 
     try:
         return json.loads(text)
@@ -48,9 +53,28 @@ def extract_json_object(text):
     return None
 
 
-def normalize_filters(filters):
+def clean_filters(filters):
     if not isinstance(filters, dict):
-        return {}
+        return {
+            "title": None,
+            "city": None,
+            "bedrooms": None,
+            "bathrooms": None,
+            "min_price": None,
+            "max_price": None,
+            "view": None,
+            "sort_by": "price",
+            "sort_order": "asc",
+        }
+
+    sort_by = filters.get("sort_by") or "price"
+    sort_order = filters.get("sort_order") or "asc"
+
+    if sort_by not in {"price", "area_sqm"}:
+        sort_by = "price"
+
+    if sort_order not in {"asc", "desc"}:
+        sort_order = "asc"
 
     return {
         "title": filters.get("title"),
@@ -60,6 +84,8 @@ def normalize_filters(filters):
         "min_price": filters.get("min_price"),
         "max_price": filters.get("max_price"),
         "view": filters.get("view"),
+        "sort_by": sort_by,
+        "sort_order": sort_order,
     }
 
 
@@ -81,7 +107,7 @@ OUTPUT RULES:
 - Return JSON only.
 - Do not add markdown, code fences, comments, or explanations.
 - Return exactly these keys and no others:
-  "title", "city", "bedrooms", "bathrooms", "min_price", "max_price", "view"
+  "title", "city", "bedrooms", "bathrooms", "min_price", "max_price", "view", "sort_by", "sort_order"
 - Use null for missing, unclear, or unsupported values.
 - Prices must be integers in EGP with no commas, symbols, or words.
 
@@ -119,11 +145,30 @@ FIELD RULES:
 - Extract only if explicitly mentioned.
 - Return a short normalized keyword, not a full phrase.
 
-7) unsupported preferences
+7) sorting
+- Extract sorting preference if the user mentions ranking or ordering.
+- Allowed "sort_by" values only:
+  - "price"
+  - "area_sqm"
+- Allowed "sort_order" values only:
+  - "asc"
+  - "desc"
+- If the user does not mention sorting, default to:
+  - "sort_by": "price"
+  - "sort_order": "asc"
+
+Examples:
+- "cheapest first" -> "sort_by": "price", "sort_order": "asc"
+- "highest price first" -> "sort_by": "price", "sort_order": "desc"
+- "biggest area first" -> "sort_by": "area_sqm", "sort_order": "desc"
+- "smallest area first" -> "sort_by": "area_sqm", "sort_order": "asc"
+- "sort by area descending" -> "sort_by": "area_sqm", "sort_order": "desc"
+
+8) unsupported preferences
 - Ignore anything that is not representable in the schema.
 - Do not turn these into any filter.
 
-8) no guessing
+9) no guessing
 - Do not infer values that are not clearly stated.
 - Do not guess title, city, price, bedrooms, bathrooms, or view.
 
@@ -135,7 +180,9 @@ Return this exact JSON shape:
   "bathrooms": null,
   "min_price": null,
   "max_price": null,
-  "view": null
+  "view": null,
+  "sort_by": "price",
+  "sort_order": "asc"
 }}
 
 User query:
@@ -143,77 +190,90 @@ User query:
 """.strip()
 
     response = llm.invoke(prompt)
-    content = response.content.strip()
-    parsed = extract_json_object(content)
-    return normalize_filters(parsed)
+    parsed = parse_json(response.content.strip())
+    return clean_filters(parsed)
 
 
 def build_pinecone_filter(filters):
-    conditions = []
+    rules = []
 
     if filters.get("title"):
-        conditions.append({"title": {"$eq": str(filters["title"]).strip().lower()}})
+        rules.append({"title": {"$eq": str(filters["title"]).strip().lower()}})
 
     if filters.get("city"):
-        conditions.append({"city": {"$eq": str(filters["city"]).strip().lower()}})
+        rules.append({"city": {"$eq": str(filters["city"]).strip().lower()}})
 
     if filters.get("bedrooms") is not None:
-        conditions.append({"bedrooms": {"$eq": int(filters["bedrooms"])}})
+        rules.append({"bedrooms": {"$eq": int(filters["bedrooms"])}})
 
     if filters.get("bathrooms") is not None:
-        conditions.append({"bathrooms": {"$eq": int(filters["bathrooms"])}})
+        rules.append({"bathrooms": {"$eq": int(filters["bathrooms"])}})
 
     if filters.get("min_price") is not None:
-        conditions.append({"price": {"$gte": float(filters["min_price"])}})
+        rules.append({"price": {"$gte": float(filters["min_price"])}})
 
     if filters.get("max_price") is not None:
-        conditions.append({"price": {"$lte": float(filters["max_price"])}})
+        rules.append({"price": {"$lte": float(filters["max_price"])}})
 
-    if not conditions:
+    if not rules:
         return {}
 
-    if len(conditions) == 1:
-        return conditions[0]
+    if len(rules) == 1:
+        return rules[0]
 
-    return {"$and": conditions}
+    return {"$and": rules}
 
 
-def contains_case_insensitive(source, target):
-    if not target:
+def matches_view(apartment_view, requested_view):
+    if not requested_view:
         return True
-    if not source:
+    if not apartment_view:
         return False
-    return str(target).strip().lower() in str(source).strip().lower()
+    return str(requested_view).strip().lower() in str(apartment_view).strip().lower()
+
+
+def sort_matches(matches, filters):
+    sort_by = filters.get("sort_by", "price")
+    sort_order = filters.get("sort_order", "asc")
+    reverse = sort_order == "desc"
+
+    def sort_value(item):
+        value = item.get(sort_by)
+        if value is None:
+            return float("-inf") if reverse else float("inf")
+        return float(value)
+
+    matches.sort(key=sort_value, reverse=reverse)
+    return matches
 
 
 @traceable(name="search_apartments")
 def search_apartments(user_query, filters, top_k):
-    embeddings_model = OpenAIEmbeddings(
+    embedding_model = OpenAIEmbeddings(
         model=settings.openai_embedding_model,
         api_key=settings.openai_api_key,
     )
     index = get_index()
 
-    query_vector = embeddings_model.embed_query(user_query)
+    query_vector = embedding_model.embed_query(user_query)
     pinecone_filter = build_pinecone_filter(filters)
 
-    query_kwargs = {
+    search_args = {
         "vector": query_vector,
         "top_k": top_k,
         "include_metadata": True,
     }
 
     if pinecone_filter:
-        query_kwargs["filter"] = pinecone_filter
+        search_args["filter"] = pinecone_filter
 
-    results = index.query(**query_kwargs)
+    results = index.query(**search_args)
 
     matches = []
     for match in results.matches:
         metadata = match.metadata or {}
 
-        view = metadata.get("view", "")
-        if not contains_case_insensitive(view, filters.get("view")):
+        if not matches_view(metadata.get("view", ""), filters.get("view")):
             continue
 
         matches.append(
@@ -235,7 +295,7 @@ def search_apartments(user_query, filters, top_k):
             }
         )
 
-    matches.sort(key=lambda x: float(x["price"]) if x.get("price") is not None else float("inf"))
+    sort_matches(matches, filters)
     return matches[:5]
 
 
@@ -250,23 +310,23 @@ def format_matches_for_prompt(matches):
         return "No apartments were retrieved."
 
     blocks = []
-    for match in matches:
-        if not isinstance(match, dict):
+    for apartment in matches:
+        if not isinstance(apartment, dict):
             continue
 
         blocks.append(
             f"""
-Apartment ID: {match.get("apartment_id")}
-Title: {match.get("title")}
-City: {match.get("city")}
-Area: {match.get("area")}
-Bedrooms: {match.get("bedrooms")}
-Bathrooms: {match.get("bathrooms")}
-Area: {match.get("area_sqm")} sqm
-View: {match.get("view")}
-Price: {match.get("price")} EGP
-Amenities: {match.get("amenities")}
-Description: {match.get("description")}
+Apartment ID: {apartment.get("apartment_id")}
+Title: {apartment.get("title")}
+City: {apartment.get("city")}
+Area: {apartment.get("area")}
+Bedrooms: {apartment.get("bedrooms")}
+Bathrooms: {apartment.get("bathrooms")}
+Area: {apartment.get("area_sqm")} sqm
+View: {apartment.get("view")}
+Price: {apartment.get("price")} EGP
+Amenities: {apartment.get("amenities")}
+Description: {apartment.get("description")}
 """.strip()
         )
 
@@ -327,8 +387,7 @@ Apartment Context:
 """.strip()
 
     response = llm.invoke(prompt)
-    content = response.content.strip()
-    parsed = extract_json_object(content)
+    parsed = parse_json(response.content.strip())
 
     if not isinstance(parsed, dict):
         return {
@@ -342,66 +401,83 @@ Apartment Context:
 @traceable(name="validate_output")
 def validate_output(output_data, matches):
     valid_ids = {match["apartment_id"] for match in matches}
+    cleaned = []
 
-    recommendations = output_data.get("recommendations", [])
-    cleaned_recommendations = []
-
-    for rec in recommendations:
-        apartment_id = rec.get("apartment_id")
-        fit_reason = str(rec.get("fit_reason", "")).strip()
+    for recommendation in output_data.get("recommendations", []):
+        apartment_id = recommendation.get("apartment_id")
+        fit_reason = str(recommendation.get("fit_reason", "")).strip()
 
         if apartment_id in valid_ids:
-            cleaned_recommendations.append(
+            cleaned.append(
                 {
                     "apartment_id": apartment_id,
                     "fit_reason": fit_reason,
                 }
             )
 
-    output_data["recommendations"] = cleaned_recommendations
+    output_data["recommendations"] = cleaned
     return output_data
 
 
 @traceable(name="merge_recommendations")
 def merge_recommendations(output_data, matches):
-    matches_map = {match["apartment_id"]: match for match in matches}
-    final_items = []
+    match_by_id = {match["apartment_id"]: match for match in matches}
+    items = []
 
-    for rec in output_data.get("recommendations", []):
-        apartment_id = rec["apartment_id"]
-        if apartment_id not in matches_map:
+    for recommendation in output_data.get("recommendations", []):
+        apartment_id = recommendation["apartment_id"]
+        if apartment_id not in match_by_id:
             continue
 
-        match = matches_map[apartment_id]
-        final_items.append(
+        apartment = match_by_id[apartment_id]
+        items.append(
             {
                 "apartment_id": apartment_id,
-                "title": match.get("title"),
-                "city": match.get("city"),
-                "area": match.get("area"),
-                "bedrooms": match.get("bedrooms"),
-                "bathrooms": match.get("bathrooms"),
-                "area_sqm": match.get("area_sqm"),
-                "view": match.get("view"),
-                "price": match.get("price"),
-                "fit_reason": rec.get("fit_reason"),
-                "amenities": match.get("amenities"),
-                "description": match.get("description"),
+                "title": apartment.get("title"),
+                "city": apartment.get("city"),
+                "area": apartment.get("area"),
+                "bedrooms": apartment.get("bedrooms"),
+                "bathrooms": apartment.get("bathrooms"),
+                "area_sqm": apartment.get("area_sqm"),
+                "view": apartment.get("view"),
+                "price": apartment.get("price"),
+                "fit_reason": recommendation.get("fit_reason"),
+                "amenities": apartment.get("amenities"),
+                "description": apartment.get("description"),
             }
         )
 
     return {
         "intro": output_data.get("intro", ""),
-        "recommendations": final_items,
+        "recommendations": items,
         "company_note": small_context_for_response,
     }
 
 
+def build_intro(filters, recommendations):
+    if not recommendations:
+        return "I couldn’t find matching apartments for your request."
+
+    sort_by = filters.get("sort_by", "price")
+    sort_order = filters.get("sort_order", "asc")
+
+    if sort_by == "area_sqm":
+        if sort_order == "desc":
+            return "I found these apartments sorted by area from largest to smallest."
+        return "I found these apartments sorted by area from smallest to largest."
+
+    if sort_order == "desc":
+        return "I found these apartments sorted by price from highest to lowest."
+    return "I found these apartments sorted by price from lowest to highest."
+
+
 @traceable(name="build_final_output")
-def build_final_output(user_query, matches):
-    raw_out = generate_answer(user_query, matches)
-    val_out = validate_output(raw_out, matches)
-    return merge_recommendations(val_out, matches)
+def build_final_output(user_query, matches, filters):
+    generated = generate_answer(user_query, matches)
+    validated = validate_output(generated, matches)
+    final_output = merge_recommendations(validated, matches)
+    final_output["intro"] = build_intro(filters, final_output.get("recommendations", []))
+    return final_output
 
 
 def render_reply(final_output):
@@ -409,34 +485,33 @@ def render_reply(final_output):
     recommendations = final_output.get("recommendations", [])
     company_note = final_output.get("company_note", "").strip()
 
-    sections = []
+    parts = []
 
     if intro:
-        sections.append(intro)
+        parts.append(intro)
 
-    for i, rec in enumerate(recommendations, start=1):
-        bedrooms = rec.get("bedrooms")
-        bathrooms = rec.get("bathrooms")
+    for index, apartment in enumerate(recommendations, start=1):
+        bedrooms = int(apartment.get("bedrooms"))
+        bathrooms = int(apartment.get("bathrooms"))
 
-        section = (
-            f"{i}. ID: {rec.get('apartment_id', '')}\n"
-            f"   Type: {rec.get('title', 'Property').title()}\n"
-            f"   Price: {rec.get('price', 'N/A')} EGP\n"
-            f"   Location: {rec.get('city', 'N/A')} - {rec.get('area', 'N/A')}\n"
+        parts.append(
+            f"{index}. ID: {apartment.get('apartment_id', '')}\n"
+            f"   Type: {apartment.get('title', 'Property').title()}\n"
+            f"   Price: {apartment.get('price', 'N/A')} EGP\n"
+            f"   Location: {apartment.get('city', 'N/A')} - {apartment.get('area', 'N/A')}\n"
             f"   Specs: {bedrooms if bedrooms is not None else 'N/A'} bedrooms, "
             f"{bathrooms if bathrooms is not None else 'N/A'} bathrooms, "
-            f"{rec.get('area_sqm', 'N/A')} sqm\n"
-            f"   Amenities: {rec.get('amenities', 'N/A')}\n"
-            f"   Description: {rec.get('description', 'N/A')}\n"
-            f"   View: {rec.get('view', 'N/A')}\n"
-            f"   Why it may fit you: {rec.get('fit_reason', 'This may fit your request based on the retrieved details.')}"
+            f"{apartment.get('area_sqm', 'N/A')} sqm\n"
+            f"   Amenities: {apartment.get('amenities', 'N/A')}\n"
+            f"   Description: {apartment.get('description', 'N/A')}\n"
+            f"   View: {apartment.get('view', 'N/A')}\n"
+            f"   Why it may fit you: {apartment.get('fit_reason', 'This may fit your request based on the retrieved details.')}"
         )
-        sections.append(section)
 
     if company_note:
-        sections.append(f"About Dorra: {company_note}")
+        parts.append(f"About Dorra: {company_note}")
 
-    return "\n\n".join(sections).strip()
+    return "\n\n".join(parts).strip()
 
 
 @traceable(name="company_info_stream_to_writer")
@@ -458,7 +533,7 @@ If something is not in the company information, say that clearly.
 Write a natural user-facing answer.
 
 Company information:
-{json.dumps(company_context_json, ensure_ascii=False, indent=2)}
+{json.dumps(company_info, ensure_ascii=False, indent=2)}
 
 User question:
 {user_query}

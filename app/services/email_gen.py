@@ -25,8 +25,8 @@ def send_email(apartment, lead_data):
             City: {apartment.get("city")}
             Area: {apartment.get("area")}
             Price: {apartment.get("price")} EGP
-            Bedrooms: {apartment.get("bedrooms")}
-            Bathrooms: {apartment.get("bathrooms")}
+            Bedrooms: {int(apartment.get("bedrooms"))}
+            Bathrooms: {int(apartment.get("bathrooms"))}
             Area Size: {apartment.get("area_sqm")} sqm
             View: {apartment.get("view")}
             
@@ -37,9 +37,8 @@ def send_email(apartment, lead_data):
             Email: {lead_data.get("email")}
             Preferred Contact Time: {lead_data.get("preferred_contact_time")}
             
-            GoodLuck!!
-            
-            DORRA AI
+            Regards,
+            Dorra AI Assistant
             """.strip()
 
     try:
@@ -60,5 +59,5 @@ def send_email(apartment, lead_data):
     except Exception as e:
         return {
             "success": False,
-            "message": f"Failed to send lead email: {str(e)}",
+            "message": f"Failed to send lead email: {e}",
         }
