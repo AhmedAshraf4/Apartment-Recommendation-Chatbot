@@ -40,11 +40,11 @@ This project includes:
 - [Project Structure](#project-structure)
 - [Prerequisites](#prerequisites)
 - [Setup Instructions](#setup-instructions)
-- [Running with Docker](#running-with-docker)
 - [How to Use the Application](#how-to-use-the-application)
 - [API Overview](#api-overview)
 - [System Architecture](#system-architecture)
 - [System Flow](#system-flow)
+- [Retrieval Pipeline](#retrieval-pipeline)
 - [Streaming Behavior](#streaming-behavior)
 - [Validation and Safety Measures](#validation-and-safety-measures)
 - [Workflow Graph](#workflow-graph)
@@ -554,7 +554,44 @@ The final text is split into smaller pieces before being sent to the frontend to
 
 
 ---
+## Retrieval Pipeline
 
+The recommendation flow uses a retrieval pipeline to make sure apartment suggestions are grounded in the indexed dataset rather than relying only on the LLM.
+
+### How retrieval works
+1. The user sends a natural-language apartment request.
+2. The system extracts structured filters from the message, such as:
+   - property type
+   - city
+   - bedrooms
+   - bathrooms
+   - price range
+   - view
+   - sorting preference
+3. The full user query is converted into an embedding using OpenAI embeddings.
+4. Pinecone is queried using:
+   - semantic similarity from the query embedding
+   - metadata filters for structured fields like city, bedrooms, bathrooms, and price range
+5. Retrieved apartments are checked again for view matching when needed.
+6. The retrieved apartments are then sorted according to the user’s requested ranking:
+   - price ascending or descending
+   - area ascending or descending
+7. The retrieved apartments view is checked if it contains some words for instance "garden" will be a hit if the view in record was "garden view". This was done in the code since pinecone doesnt support that
+8. The top retrieved apartments are passed to the LLM only to generate fit reasons and decide which of the retrieved apartments best fit the request.
+
+### Why this retrieval setup was used
+Using retrieval keeps the recommendation process grounded in actual apartment data from the indexed dataset. This makes the chatbot more reliable and reduces the chance of the model inventing properties that do not exist.
+
+The system combines:
+- **semantic search**, which helps match the overall meaning of the user request
+- **metadata filtering**, which enforces structured conditions like city, bedroom count, bathroom count, and price range
+
+This combination makes the search both flexible and precise.
+
+### Final grounding step
+After retrieval and LLM reasoning, the returned apartment IDs are validated against the actual retrieved Pinecone results before rendering the final response. The apartment information shown to the user comes from the indexed metadata, while the LLM is only used for fit reasoning and response phrasing.
+
+---
 ## Validation and Safety Measures
 
 ### Search validation
