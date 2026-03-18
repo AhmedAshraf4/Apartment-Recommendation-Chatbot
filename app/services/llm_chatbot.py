@@ -12,7 +12,7 @@ from app.core.config import settings
 small_context_for_response = """
 Give me the ID of any unit you are intersted in to follow up
 
-Dorra is an Egyptian construction and development group.
+About Dorra: Dorra is an Egyptian construction and development group.
 - Hotline: 16077
 - Email: info@dorra.com
 - Location: Courtyard, Building K, Al Shabab Rd, Second Al Sheikh Zayed, Giza Governorate, Egypt.
@@ -518,7 +518,7 @@ def render_reply(final_output):
         )
 
     if company_note:
-        parts.append(f"About Dorra: {company_note}")
+        parts.append(f"{company_note}")
 
     return "\n\n".join(parts).strip()
 

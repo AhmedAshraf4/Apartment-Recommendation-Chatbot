@@ -59,9 +59,9 @@ async def chat_stream(request_data: ChatRequest):
                     current_intent = final_state.get("intent")
 
                     if message_text and current_intent != "company_info":
-                        for piece in split_for_typing_effect(message_text, 18):
+                        for piece in split_for_typing_effect(message_text, 8):
                             yield piece
-                            time.sleep(0.03)
+                            time.sleep(0.04)
         finally:
             session_store[session_id] = final_state
 
