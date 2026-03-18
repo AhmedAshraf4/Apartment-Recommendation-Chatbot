@@ -29,8 +29,17 @@ This project includes:
 
 ## Live Demo
 
-- **Live App Link:** `Add deployed app link here`
-- **Demo Video Link:** `Add video link here if available`
+- **Live App Link:**   [link](https://dorra-frontend.onrender.com)
+- **Demo Video Link:**   [link](https://drive.google.com/file/d/1fziCs8dKB8HdQvvfOqYx0Bb-aNi0s4lh/view?usp=sharing)
+
+**important:**
+```
+For admin login:
+Admin username: admin
+Admin password: admin123
+
+to get a lead of an apartment start by sending the id of the apartment you are intersted in and then follow up with the personal information needed
+```
 
 >This live demo was held on Render by creating a backend web-service and a frontend static site
 
