@@ -12,5 +12,4 @@ langgraph
 langsmith
 itsdangerous
 pydantic-settings
-json
 urllib
