@@ -373,7 +373,8 @@ def generate_answer(user_query, matches):
             6. The apartments are already sorted in the order they should be presented to the user.
             7. For each apartment, write one short sentence explaining why it may fit the user's request.
             8. Sorting instructions are only for ordering and must not be used as a reason to remove apartments.
-            9. If user said "a townhouse" for example still return more than one option        
+            9. If user said "a townhouse" for example still return more than one option
+            10. Only return the cheapest or most expensive unit if it was explicitly mentioned        
             Return JSON only in this exact shape:
             {{
               "intro": "string",
