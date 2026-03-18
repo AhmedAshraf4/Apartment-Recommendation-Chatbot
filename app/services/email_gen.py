@@ -1,8 +1,11 @@
-import smtplib
-from email.message import EmailMessage
+import json
+from urllib import request, error
 
 from app.core.config import settings
 from langsmith import traceable
+
+
+RESEND_API_URL = "https://api.resend.com/emails"
 
 
 @traceable(name="send_email")
@@ -16,55 +19,83 @@ def send_email(apartment, lead_data):
             "message": f"No agent email found for apartment {apartment_id}.",
         }
 
+    resend_api_key = getattr(settings, "resend_api_key", None)
+    resend_from_email = getattr(settings, "resend_from_email", None)
+
+    if not resend_api_key or not resend_from_email:
+        return {
+            "success": False,
+            "message": "Resend is not configured. Missing RESEND_API_KEY or RESEND_FROM_EMAIL.",
+        }
+
     bedrooms = apartment.get("bedrooms")
     bathrooms = apartment.get("bathrooms")
 
     subject = f"New Lead for Apartment {apartment_id}"
-    body = f"""A new lead is interested in one of your properties.
+    html = f"""
+    <h2>New Lead for Apartment {apartment_id}</h2>
 
-Apartment Details
------------------
-Apartment ID: {apartment.get("apartment_id")}
-Title: {apartment.get("title")}
-City: {apartment.get("city")}
-Area: {apartment.get("area")}
-Price: {apartment.get("price")} EGP
-Bedrooms: {bedrooms if bedrooms is not None else "N/A"}
-Bathrooms: {bathrooms if bathrooms is not None else "N/A"}
-Area Size: {apartment.get("area_sqm")} sqm
-View: {apartment.get("view")}
+    <h3>Apartment Details</h3>
+    <ul>
+      <li><strong>Apartment ID:</strong> {apartment.get("apartment_id")}</li>
+      <li><strong>Title:</strong> {apartment.get("title")}</li>
+      <li><strong>City:</strong> {apartment.get("city")}</li>
+      <li><strong>Area:</strong> {apartment.get("area")}</li>
+      <li><strong>Price:</strong> {apartment.get("price")} EGP</li>
+      <li><strong>Bedrooms:</strong> {bedrooms if bedrooms is not None else "N/A"}</li>
+      <li><strong>Bathrooms:</strong> {bathrooms if bathrooms is not None else "N/A"}</li>
+      <li><strong>Area Size:</strong> {apartment.get("area_sqm")} sqm</li>
+      <li><strong>View:</strong> {apartment.get("view")}</li>
+    </ul>
 
-Lead Details
-------------
-Name: {lead_data.get("name")}
-Phone: {lead_data.get("phone")}
-Email: {lead_data.get("email")}
-Preferred Contact Time: {lead_data.get("preferred_contact_time")}
+    <h3>Lead Details</h3>
+    <ul>
+      <li><strong>Name:</strong> {lead_data.get("name")}</li>
+      <li><strong>Phone:</strong> {lead_data.get("phone")}</li>
+      <li><strong>Email:</strong> {lead_data.get("email")}</li>
+      <li><strong>Preferred Contact Time:</strong> {lead_data.get("preferred_contact_time")}</li>
+    </ul>
 
-Regards,
-Dorra AI Assistant"""
+    <p>Regards,<br>Dorra AI Assistant</p>
+    """.strip()
+
+    payload = {
+        "from": resend_from_email,
+        "to": [agent_email],
+        "subject": subject,
+        "html": html,
+    }
+
+    req = request.Request(
+        RESEND_API_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {resend_api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
 
     try:
-        message = EmailMessage()
-        message["Subject"] = subject
-        message["From"] = settings.smtp_from
-        message["To"] = agent_email
-        message.set_content(body)
-
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(settings.smtp_user, settings.smtp_password)
-            server.send_message(message)
+        with request.urlopen(req, timeout=15) as response:
+            response_body = response.read().decode("utf-8")
+            response_data = json.loads(response_body) if response_body else {}
 
         return {
             "success": True,
             "message": f"Lead email sent successfully to {agent_email}.",
+            "provider_response": response_data,
         }
 
-    except Exception as error:
+    except error.HTTPError as http_error:
+        error_body = http_error.read().decode("utf-8", errors="ignore")
         return {
             "success": False,
-            "message": f"Failed to send lead email: {error}",
+            "message": f"Failed to send lead email: {http_error.code} {error_body}",
+        }
+
+    except Exception as err:
+        return {
+            "success": False,
+            "message": f"Failed to send lead email: {err}",
         }
