@@ -10,12 +10,16 @@ from app.core.config import settings
 
 
 small_context_for_response = """
-Give me the ID of any unit you are intersted in to follow up
+
+
 
 About Dorra: Dorra is an Egyptian construction and development group.
 - Hotline: 16077
 - Email: info@dorra.com
 - Location: Courtyard, Building K, Al Shabab Rd, Second Al Sheikh Zayed, Giza Governorate, Egypt.
+
+
+Give me the "ID" of any unit you are intersted in to follow up
 """
 
 
