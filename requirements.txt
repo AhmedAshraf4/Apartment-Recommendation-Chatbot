@@ -12,3 +12,4 @@ langgraph
 langsmith
 itsdangerous
 pydantic-settings
+brevo

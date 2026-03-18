@@ -1,11 +1,6 @@
-import json
-from urllib import request, error
-
+from brevo import Brevo
 from app.core.config import settings
 from langsmith import traceable
-
-
-RESEND_API_URL = "https://api.resend.com/emails"
 
 
 @traceable(name="send_email")
@@ -19,20 +14,17 @@ def send_email(apartment, lead_data):
             "message": f"No agent email found for apartment {apartment_id}.",
         }
 
-    resend_api_key = getattr(settings, "resend_api_key", None)
-    resend_from_email = getattr(settings, "resend_from_email", None)
-
-    if not resend_api_key or not resend_from_email:
+    if not settings.brevo_api_key or not settings.brevo_from_email:
         return {
             "success": False,
-            "message": "Resend is not configured. Missing RESEND_API_KEY or RESEND_FROM_EMAIL.",
+            "message": "Brevo is not configured. Missing BREVO_API_KEY or BREVO_FROM_EMAIL.",
         }
 
     bedrooms = apartment.get("bedrooms")
     bathrooms = apartment.get("bathrooms")
 
     subject = f"New Lead for Apartment {apartment_id}"
-    html = f"""
+    html_content = f"""
     <h2>New Lead for Apartment {apartment_id}</h2>
 
     <h3>Apartment Details</h3>
@@ -59,43 +51,33 @@ def send_email(apartment, lead_data):
     <p>Regards,<br>Dorra AI Assistant</p>
     """.strip()
 
-    payload = {
-        "from": resend_from_email,
-        "to": [agent_email],
-        "subject": subject,
-        "html": html,
-    }
-
-    req = request.Request(
-        RESEND_API_URL,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {resend_api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-
     try:
-        with request.urlopen(req, timeout=15) as response:
-            response_body = response.read().decode("utf-8")
-            response_data = json.loads(response_body) if response_body else {}
+        client = Brevo(api_key=settings.brevo_api_key, timeout=15.0)
 
-        return {
-            "success": True,
-            "message": f"Lead email sent successfully to {agent_email}.",
-            "provider_response": response_data,
-        }
+        response = client.transactional_emails.with_raw_response.send_transac_email(
+            sender={
+                "email": settings.brevo_from_email,
+                "name": settings.brevo_from_name or "Dorra AI Assistant",
+            },
+            to=[{"email": agent_email}],
+            subject=subject,
+            html_content=html_content,
+            request_options={"timeout_in_seconds": 15},
+        )
 
-    except error.HTTPError as http_error:
-        error_body = http_error.read().decode("utf-8", errors="ignore")
+        if 200 <= response.status_code < 300:
+            return {
+                "success": True,
+                "message": f"Lead email sent successfully to {agent_email}.",
+            }
+
         return {
             "success": False,
-            "message": f"Failed to send lead email: {http_error.code} {error_body}",
+            "message": f"Failed to send lead email: status {response.status_code}, body {response.data}",
         }
 
-    except Exception as err:
+    except Exception as error:
         return {
             "success": False,
-            "message": f"Failed to send lead email: {err}",
+            "message": f"Failed to send lead email: {error}",
         }

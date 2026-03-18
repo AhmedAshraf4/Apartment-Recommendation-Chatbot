@@ -10,6 +10,8 @@ from app.core.config import settings
 
 
 small_context_for_response = """
+Give me the ID of any unit you are intersted in to follow up
+
 Dorra is an Egyptian construction and development group.
 - Hotline: 16077
 - Email: info@dorra.com

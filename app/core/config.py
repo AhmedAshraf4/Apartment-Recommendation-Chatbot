@@ -25,8 +25,9 @@ class Settings(BaseSettings):
     langsmith_tracking: str | None = None
     langsmith_project: str | None = None
     langsmith_workspace_id: str | None = None
-    resend_api_key: str | None = None
-    resend_from_email: str | None = None
+    brevo_api_key: str | None = None
+    brevo_from_email: str | None = None
+    brevo_from_name: str | None = None
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
