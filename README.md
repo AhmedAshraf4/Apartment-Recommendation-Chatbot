@@ -21,19 +21,27 @@ This project includes:
 - A sample data as an excel file for testing
 - README setup instructions
 - Docker support
+- Live Demo Deployment
 - Bonus: Streaming AI responses
 - Bonus: apartment ranking
 - Bonus: LangSmith observability
 ---
 
-## Live video demo
+## Live Demo
 
-- **Link:** 
+- **Live App Link:** `Add deployed app link here`
+- **Demo Video Link:** `Add video link here if available`
+
+>This live demo was held on Render by creating a backend web-service and a frontend static site
+
+>I am using the free tier of Render so give it some time to load the project for the first time since it deploys it from the beginning
 
 ---
 
 ## Table of Contents
 
+- [Live Demo](#live-demo)
+- [Demo Used](#demo-used)
 - [Tech Stack](#tech-stack)
 - [Core Features](#core-features)
 - [Supported Intents](#supported-intents)
@@ -65,7 +73,7 @@ This project includes:
 - LangChain + OpenAI
 - Pinecone
 - Pandas
-- SMTP email sending
+- Brevo email API
 - LangSmith tracing
 
 ### Frontend
@@ -185,7 +193,7 @@ Make sure you have the following installed before running the project:
 - An OpenAI API key
 - A Pinecone account and API key
 
-You will also need a valid SMTP account if you want to test the email handoff flow.
+You will also need a Brevo account, API key, and verified sender email if you want to test the email handoff flow.
 
 ---
 
@@ -220,11 +228,9 @@ SESSION_SECRET=replace_with_a_secret_key
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=admin123
 
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your_smtp_user
-SMTP_PASSWORD=your_smtp_password
-SMTP_FROM=your_from_email
+BREVO_API_KEY=your_brevo_api_key
+BREVO_FROM_EMAIL=your_verified_sender_email
+BREVO_FROM_NAME=Dorra AI Assistant
 
 LANGCHAIN_API_KEY=optional_if_using_langsmith
 LANGCHAIN_TRACING_V2=true
@@ -479,7 +485,7 @@ flowchart TD
     retrieve --> pinecone
     llm_reasoning --> openai[(OpenAI / LangChain)]
     company_stream --> openai
-    send_email_step --> smtp[(SMTP Server)]
+    send_email_step --> brevo[(Brevo Email API)]
 
     render_search --> stream_ui[Stream response back to frontend]
     ask_missing --> stream_ui
