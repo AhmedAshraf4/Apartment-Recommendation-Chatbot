@@ -12,4 +12,3 @@ langgraph
 langsmith
 itsdangerous
 pydantic-settings
-urllib
