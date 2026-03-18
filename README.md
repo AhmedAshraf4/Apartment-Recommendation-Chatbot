@@ -8,7 +8,27 @@ A full-stack real estate assistant for **Dorra** that supports three main flows 
 
 The project also includes an **admin upload flow** for Excel apartment data, validation before indexing, and Docker support for running both backend and frontend.
 
-This deliverable satisfied all the core requirments of the project + the bonus requirments as well
+## Assignment Coverage
+
+This project includes:
+- FastAPI backend
+- LangChain + Pinecone RAG pipeline
+- LangGraph workflow orchestration
+- Multi-turn lead collection
+- Agent email handoff
+- React frontend
+- Admin Excel upload and validation
+- A sample data as an excel file for testing
+- README setup instructions
+- Docker support
+- Bonus: Streaming AI responses
+- Bonus: apartment ranking
+- Bonus: LangSmith observability
+---
+
+## Live video demo
+
+- **Link:** 
 
 ---
 
@@ -18,17 +38,20 @@ This deliverable satisfied all the core requirments of the project + the bonus r
 - [Core Features](#core-features)
 - [Supported Intents](#supported-intents)
 - [Project Structure](#project-structure)
+- [Prerequisites](#prerequisites)
 - [Setup Instructions](#setup-instructions)
-- [Running the Project Locally](#running-the-project-locally)
-- [Running with Docker](#running-with-docker)
 - [How to Use the Application](#how-to-use-the-application)
 - [API Overview](#api-overview)
+- [System Architecture](#system-architecture)
 - [System Flow](#system-flow)
+- [Retrieval Pipeline](#retrieval-pipeline)
 - [Streaming Behavior](#streaming-behavior)
 - [Validation and Safety Measures](#validation-and-safety-measures)
 - [Workflow Graph](#workflow-graph)
 - [Design Choices](#design-choices)
 - [LangSmith Tracing and Debugging](#langsmith-tracing-and-debugging)
+- [Sample Dataset](#sample-dataset)
+- [Admin Access](#admin-access)
 - [Limitations](#limitations)
 - [Future Improvements](#future-improvements)
 
@@ -152,6 +175,20 @@ project-root/
 
 ---
 
+## Prerequisites
+
+Make sure you have the following installed before running the project:
+
+- Python 3.11+
+- Node.js 20+
+- Docker Desktop (if using Docker)
+- An OpenAI API key
+- A Pinecone account and API key
+
+You will also need a valid SMTP account if you want to test the email handoff flow.
+
+---
+
 ## Setup Instructions
 
 ## 1. Clone the repository
@@ -161,35 +198,7 @@ git clone https://github.com/AhmedAshraf4/Apartment-Recommendation-Chatbot.git
 cd Apartment-Recommendation-Chatbot
 ```
 
-## 2. Create a virtual environment
-
-### Windows
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-```
-
-### macOS / Linux
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-## 3. Install backend dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-## 4. Install frontend dependencies
-
-```bash
-cd frontend
-npm install
-cd ..
-```
-
-## 5. Create the `.env` file
+## 2. Create the `.env` file
 
 Create a `.env` file in the project root.
 
@@ -224,7 +233,7 @@ LANGCHAIN_PROJECT="dorra"
 
 > The exact environment variable names should match the names expected in `app/core/config.py`.
 
-## 6. Make sure `company_info.json` exists
+## 3. Make sure `company_info.json` exists
 
 The backend loads company information from:
 
@@ -234,11 +243,70 @@ company_info.json
 
 Place this file in the **project root**.
 
+## 4. Choose one of the following run options
+
+You can run the project in one of two ways:
+
+- **Option A: Docker**
+- **Option B: Local development**
+
 ---
 
-## Running the Project Locally
+## Option A: Run with Docker
 
-## 1. Run the backend
+This is the easiest way to run both backend and frontend together.
+
+### Start everything
+
+From the project root:
+
+```bash
+docker compose up --build
+```
+
+This starts:
+- backend on `http://localhost:8000`
+- frontend on `http://localhost:5173`
+
+### Stop everything
+
+```bash
+docker compose down
+```
+
+---
+
+## Option B: Run Locally
+
+### 1. Create a virtual environment
+
+#### Windows
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+```
+
+#### macOS / Linux
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+### 2. Install backend dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Install frontend dependencies
+
+```bash
+cd frontend
+npm install
+cd ..
+```
+
+### 4. Run the backend
 
 From the project root:
 
@@ -252,7 +320,7 @@ Backend will run at:
 http://localhost:8000
 ```
 
-## 2. Run the frontend
+### 5. Run the frontend
 
 In a second terminal:
 
@@ -265,41 +333,6 @@ Frontend will run at:
 
 ```text
 http://localhost:5173
-```
-
----
-
-## Running with Docker
-
-This project includes Docker support for both backend and frontend.
-
-## Files used
-
-### In project root
-- `Dockerfile`
-- `.dockerignore`
-- `docker-compose.yml`
-
-### In `frontend/`
-- `Dockerfile`
-- `.dockerignore`
-
-## Run everything
-
-From the project root:
-
-```bash
-docker compose up --build
-```
-
-This starts:
-- backend on `http://localhost:8000`
-- frontend on `http://localhost:5173`
-
-## Stop everything
-
-```bash
-docker compose down
 ```
 
 ---
@@ -380,6 +413,84 @@ Basic health check.
 
 ---
 
+## System Architecture
+
+> If Mermaid diagrams are not rendered in your viewer, open this README on GitHub to view the workflow graph properly.
+
+```mermaid
+flowchart TD
+    homepage --> user
+    homepage --> admin
+    user[User] --> ui[React Frontend]
+    admin[Admin] --> admin_ui[Admin Frontend]
+
+    ui --> chat_api["POST /chat/stream"]
+    admin_ui --> login_api["POST /admin/login"]
+    login_api --> upload_api["POST /admin/upload"]
+
+    upload_api --> validate_excel[Validate Excel file]
+    validate_excel --> clean_rows[Clean and normalize rows]
+    clean_rows --> validate_rows[Validate required fields and values]
+    validate_rows --> embed_index[Generate embeddings and index apartments]
+    embed_index --> pinecone[(Pinecone)]
+
+    chat_api --> session_state[Load / update session state]
+
+    subgraph langgraph_box["LangGraph Chat Workflow"]
+        detect[detect_intent]
+
+        search_node[search_and_recommend]
+        search_node --> extract_filters[Extract search filters and sorting]
+        extract_filters --> retrieve[Retrieve apartments from Pinecone]
+        retrieve --> llm_reasoning[Generate unitIDs + fit reasons with LLM]
+        llm_reasoning --> validate_ids[Validate recommended apartment IDs]
+        validate_ids --> render_search[Sort according to user choice and Render final search reply]
+
+        lead_node[extract_lead]
+        lead_node --> lead_extract[Extract lead fields from user message]
+        lead_extract --> lead_merge[Merge with previous lead state]
+        lead_merge --> lead_check[Check missing fields]
+
+        lead_reply[lead_reply]
+        lead_reply --> ask_missing[Ask only for missing lead fields]
+
+        send_lead[send_lead]
+        send_lead --> match_apartment[Match apartment from current search results]
+        match_apartment --> send_email_step[Send lead email to apartment agent]
+
+        company_node[company_info]
+        company_node --> company_json[Load company_info.json]
+        company_json --> company_stream[Stream grounded company answer]
+
+        unsupported_node[unsupported]
+        unsupported_node --> fallback_reply[Return fixed fallback reply]
+    end
+
+    session_state --> detect
+
+    detect -->|search| search_node
+    detect -->|lead| lead_node
+    detect -->|company_info| company_node
+    detect -->|unsupported| unsupported_node
+
+    lead_check -->|missing| lead_reply
+    lead_check -->|complete| send_lead
+
+    retrieve --> pinecone
+    llm_reasoning --> openai[(OpenAI / LangChain)]
+    company_stream --> openai
+    send_email_step --> smtp[(SMTP Server)]
+
+    render_search --> stream_ui[Stream response back to frontend]
+    ask_missing --> stream_ui
+    send_email_step --> stream_ui
+    company_stream --> stream_ui
+    fallback_reply --> stream_ui
+```
+
+
+---
+
 ## System Flow
 
 ### Search Flow
@@ -439,11 +550,48 @@ The response is streamed chunk by chunk as the model generates it.
 
 ### 2. Simulated typing effect
 Used for **search** and **lead** replies.
-The final text is split into smaller pieces before being sent to the frontend to keep the streamed response feel. Streaming is not used here because the llm output needed to be collected as a whole and verified first before getting pushed to the frontend. 
+The final text is split into smaller pieces before being sent to the frontend to keep the streamed response feel. Streaming is not used here because the llm output needed to be collected as a whole and validated first as the case of searh where we check that the LLM response IDs are actually present in the retrieved IDs and then the rest of the information about the unit is parsed with the ID and the fit_reason generated by the LLM and then the response is rendered before getting pushed to the frontend.
 
->AI streaming of responses is done only in the case of company info flow since in the other flows the response of the AI is validated and parsed first before pushing it to the frontend so it much be fully recieved to start validation before pushing
+
 ---
+## Retrieval Pipeline
 
+The recommendation flow uses a retrieval pipeline to make sure apartment suggestions are grounded in the indexed dataset rather than relying only on the LLM.
+
+### How retrieval works
+1. The user sends a natural-language apartment request.
+2. The system extracts structured filters from the message, such as:
+   - property type
+   - city
+   - bedrooms
+   - bathrooms
+   - price range
+   - view
+   - sorting preference
+3. The full user query is converted into an embedding using OpenAI embeddings.
+4. Pinecone is queried using:
+   - semantic similarity from the query embedding
+   - metadata filters for structured fields like city, bedrooms, bathrooms, and price range
+5. Retrieved apartments are checked again for view matching when needed.
+6. The retrieved apartments are then sorted according to the user’s requested ranking:
+   - price ascending or descending
+   - area ascending or descending
+7. The retrieved apartments view is checked if it contains some words for instance "garden" will be a hit if the view in record was "garden view". This was done in the code since pinecone doesnt support that
+8. The top retrieved apartments are passed to the LLM only to generate fit reasons and decide which of the retrieved apartments best fit the request.
+
+### Why this retrieval setup was used
+Using retrieval keeps the recommendation process grounded in actual apartment data from the indexed dataset. This makes the chatbot more reliable and reduces the chance of the model inventing properties that do not exist.
+
+The system combines:
+- **semantic search**, which helps match the overall meaning of the user request
+- **metadata filtering**, which enforces structured conditions like city, bedroom count, bathroom count, and price range
+
+This combination makes the search both flexible and precise.
+
+### Final grounding step
+After retrieval and LLM reasoning, the returned apartment IDs are validated against the actual retrieved Pinecone results before rendering the final response. The apartment information shown to the user comes from the indexed metadata, while the LLM is only used for fit reasoning and response phrasing.
+
+---
 ## Validation and Safety Measures
 
 ### Search validation
@@ -468,6 +616,8 @@ Requests outside the supported intents are handled with a fixed reply.
 
 ## Workflow Graph
 
+> If Mermaid diagrams are not rendered in your viewer, open this README on GitHub to view the workflow graph properly.
+
 ```mermaid
 graph TD
     start([__start__]):::first
@@ -491,31 +641,22 @@ graph TD
 
     detect_intent -. search .-> search_and_recommend
     detect_intent -. lead .-> extract_lead
-    detect_intent -.-> company_info
-    detect_intent -.-> unsupported
+    detect_intent -. company_info .-> company_info
+    detect_intent -. unsupported .-> unsupported
 
     extract_lead -. missing .-> lead_reply
     extract_lead -. complete .-> send_lead
-
 ```
 
 ---
 
 ## Design Choices
 
-### Why LangGraph?
-LangGraph is used to keep the chatbot flow explicit and stateful.
-It makes it easier to separate and manage:
-- search flow
-- lead flow
-- company info flow
-- unsupported fallback flow
-
 ### Why Pinecone?
 Pinecone is used for semantic apartment retrieval, combined with metadata filtering for structured conditions like city, bedrooms, and price range.
 
 ### Why validate LLM output?
-The LLM only generates fit reasons and ordering context, but final apartment facts come from the indexed data. This reduces hallucination risk in the recommendation response.
+The LLM only generates fit reasons and unit IDs, but final apartment facts come from the indexed data. This reduces hallucination risk in the recommendation response.
 
 ### Why use both real streaming and chunked UI streaming?
 Because the project needs two different behaviors:
@@ -523,6 +664,9 @@ Because the project needs two different behaviors:
 - controlled UI typing effect for search and lead responses
 
 Since some responses needed to be validated from the LLM first
+
+### Why this architecture works for the task
+This architecture balances flexibility and safety. Retrieval through Pinecone grounds the recommendation process in real apartment data, LangGraph keeps the multi-flow chatbot behavior explicit and manageable, validation reduces the risk of hallucinated apartment recommendations, and the admin upload pipeline keeps the indexed dataset maintainable and easy to refresh.
 
 ---
 
@@ -533,6 +677,77 @@ LangSmith was used during development to trace, inspect, and debug the full chat
 This was especially useful for verifying that LangGraph routing was correct, checking that retrieved apartment data was passed properly between steps, and catching cases where the model output was valid in isolation but was not being forwarded correctly to the frontend. In practice, LangSmith served as the main observability and debugging tool for understanding how the chatbot behaved internally across different user flows.
 
 ---
+
+## Sample Dataset
+
+A sample Excel dataset is included in the repository as:
+
+```text
+appartments.xlsx
+```
+
+This file can be uploaded through the admin flow and is used to populate the apartment index.
+
+> Data from this file was scraped from Propertyfinder realestate website then used an LLM to organize them
+
+Columns in the dataset:
+
+**apartment_id**  
+A unique identifier for each property listing. This helps distinguish one apartment from another.
+
+**title**  
+The type or category of the property, such as apartment or studio.
+
+**city**  
+The city where the property is located, such as New Cairo, East Cairo, or Madinaty.
+
+**area**  
+The name of the compound, district, or residential project where the property is situated.
+
+**location**  
+The full location description of the property, usually including the compound, district, and city.
+
+**bedrooms**  
+The number of bedrooms available in the property.
+
+**bathrooms**  
+The number of bathrooms included in the property.
+
+**area_sqm**  
+The total size of the property measured in square meters.
+
+**view**  
+A short description of what the property overlooks, such as a garden view, lake view, or compound view.
+
+**price**  
+The sale price of the property.
+
+**amenities**  
+A list of facilities and services available in the property or compound, such as parking, swimming pools, security, gardens, and commercial areas.
+
+**description**  
+A detailed summary of the property, including its finishing, layout, special features, and the advantages of its location or compound.
+
+**agent_email**  
+The contact email address for the agent or person responsible for the listing.
+
+---
+
+## Admin Access
+
+Admin authentication is configured through environment variables in `.env`:
+
+- `ADMIN_USERNAME`
+- `ADMIN_PASSWORD`
+
+Example from the sample environment configuration:
+
+```env
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=admin123
+```
+---
+
 ## Limitations
 
 - The admin session is stored in application memory/session middleware and is not designed for production-grade auth.
@@ -549,6 +764,3 @@ This was especially useful for verifying that LangGraph routing was correct, che
 - More advanced lead CRM integration
 - Better analytics around search behavior and conversions
 - Arabic integration for the chatbot
-
-
-

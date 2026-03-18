@@ -1,7 +1,6 @@
 from pathlib import Path
 import json
 import re
-
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pinecone import Pinecone
 from langsmith import traceable
@@ -67,13 +66,21 @@ def clean_filters(filters):
             "sort_order": "asc",
         }
 
-    sort_by = filters.get("sort_by") or "price"
-    sort_order = filters.get("sort_order") or "asc"
+    raw_sort_by = str(filters.get("sort_by") or "").strip().lower()
+    raw_sort_order = str(filters.get("sort_order") or "").strip().lower()
 
-    if sort_by not in {"price", "area_sqm"}:
+    if raw_sort_by in {"area", "area_sqm", "sqm", "size"}:
+        sort_by = "area_sqm"
+    elif raw_sort_by in {"price", "cost", "budget"}:
+        sort_by = "price"
+    else:
         sort_by = "price"
 
-    if sort_order not in {"asc", "desc"}:
+    if raw_sort_order in {"desc", "descending", "high_to_low", "highest", "largest", "biggest"}:
+        sort_order = "desc"
+    elif raw_sort_order in {"asc", "ascending", "low_to_high", "lowest", "smallest", "cheapest"}:
+        sort_order = "asc"
+    else:
         sort_order = "asc"
 
     return {
@@ -98,92 +105,92 @@ def extract_meta(user_query):
     )
 
     prompt = f"""
-You are a strict information-extraction engine for apartment search queries.
-
-Your job is to extract only the supported filters from the user query
-and return exactly one valid JSON object.
-
-OUTPUT RULES:
-- Return JSON only.
-- Do not add markdown, code fences, comments, or explanations.
-- Return exactly these keys and no others:
-  "title", "city", "bedrooms", "bathrooms", "min_price", "max_price", "view", "sort_by", "sort_order"
-- Use null for missing, unclear, or unsupported values.
-- Prices must be integers in EGP with no commas, symbols, or words.
-
-FIELD RULES:
-
-1) title
-- Extract the property type only if explicitly stated or clearly implied.
-- Allowed values only:
-  - "apartment"
-  - "studio"
-  - "townhouse"
-  - "penthouse"
-  - "duplex"
-- If no valid property type is clearly mentioned, return null.
-
-2) city
-- Extract the city only from the query.
-- Ignore micro-areas, compounds, neighborhoods, and districts.
-- Keep it short, lowercase, and useful for exact matching.
-
-3) bedrooms
-- Extract only when the query clearly asks for an exact bedroom count.
-- If the query uses comparative language that cannot be represented exactly, return null.
-
-4) bathrooms
-- Extract only when the query clearly asks for an exact bathroom count.
-- If the query uses comparative language that cannot be represented exactly, return null.
-
-5) price
-- Interpret prices in EGP.
-- Convert shorthand into full integers.
-- If only one side of the range is stated, leave the other side null.
-
-6) view
-- Extract only if explicitly mentioned.
-- Return a short normalized keyword, not a full phrase.
-
-7) sorting
-- Extract sorting preference if the user mentions ranking or ordering.
-- Allowed "sort_by" values only:
-  - "price"
-  - "area_sqm"
-- Allowed "sort_order" values only:
-  - "asc"
-  - "desc"
-- If the user does not mention sorting, default to:
-  - "sort_by": "price"
-  - "sort_order": "asc"
-
-Examples:
-- "cheapest first" -> "sort_by": "price", "sort_order": "asc"
-- "highest price first" -> "sort_by": "price", "sort_order": "desc"
-- "biggest area first" -> "sort_by": "area_sqm", "sort_order": "desc"
-- "smallest area first" -> "sort_by": "area_sqm", "sort_order": "asc"
-- "sort by area descending" -> "sort_by": "area_sqm", "sort_order": "desc"
-
-8) unsupported preferences
-- Ignore anything that is not representable in the schema.
-- Do not turn these into any filter.
-
-9) no guessing
-- Do not infer values that are not clearly stated.
-- Do not guess title, city, price, bedrooms, bathrooms, or view.
-
-Return this exact JSON shape:
-{{
-  "title": null,
-  "city": null,
-  "bedrooms": null,
-  "bathrooms": null,
-  "min_price": null,
-  "max_price": null,
-  "view": null,
-  "sort_by": "price",
-  "sort_order": "asc"
-}}
+            You are a strict information-extraction engine for apartment search queries.
+            
+            Your job is to extract only the supported filters from the user query
+            and return exactly one valid JSON object.
+            
+            OUTPUT RULES:
+            - Return JSON only.
+            - Do not add markdown, code fences, comments, or explanations.
+            - Return exactly these keys and no others:
+              "title", "city", "bedrooms", "bathrooms", "min_price", "max_price", "view", "sort_by", "sort_order"
+            - Use null for missing, unclear, or unsupported values.
+            - Prices must be integers in EGP with no commas, symbols, or words.
+            
+            FIELD RULES:
+            
+            1) title
+            - Extract the property type only if explicitly stated or clearly implied.
+            - Allowed values only:
+              - "apartment"
+              - "studio"
+              - "townhouse"
+              - "penthouse"
+              - "duplex"
+            - If no valid property type is clearly mentioned, return null.
+            
+            2) city
+            - Extract the city only from the query.
+            - Ignore micro-areas, compounds, neighborhoods, and districts.
+            - Keep it short, lowercase, and useful for exact matching.
+            
+            3) bedrooms
+            - Extract only when the query clearly asks for an exact bedroom count.
+            - If the query uses comparative language that cannot be represented exactly, return null.
+            
+            4) bathrooms
+            - Extract only when the query clearly asks for an exact bathroom count.
+            - If the query uses comparative language that cannot be represented exactly, return null.
+            
+            5) price
+            - Interpret prices in EGP.
+            - Convert shorthand into full integers.
+            - If only one side of the range is stated, leave the other side null.
+            
+            6) view
+            - Extract only if explicitly mentioned.
+            - Return a short normalized keyword, not a full phrase.
+            
+            7) sorting
+            - Extract sorting preference if the user mentions ranking or ordering.
+            - Allowed "sort_by" values only:
+              - "price"
+              - "area_sqm"
+            - Allowed "sort_order" values only:
+              - "asc"
+              - "desc"
+            - If the user does not mention sorting, default to:
+              - "sort_by": "price"
+              - "sort_order": "asc"
+            
+            Examples:
+            - "cheapest first" -> "sort_by": "price", "sort_order": "asc"
+            - "highest price first" -> "sort_by": "price", "sort_order": "desc"
+            - "biggest area first" -> "sort_by": "area_sqm", "sort_order": "desc"
+            - "smallest area first" -> "sort_by": "area_sqm", "sort_order": "asc"
+            - "sort by area descending" -> "sort_by": "area_sqm", "sort_order": "desc"
+            
+            8) unsupported preferences
+            - Ignore anything that is not representable in the schema.
+            - Do not turn these into any filter.
+            
+            9) no guessing
+            - Do not infer values that are not clearly stated.
+            - Do not guess title, city, price, bedrooms, bathrooms, or view.
+            
+            Return this exact JSON shape:
+            {{
+              "title": null,
+              "city": null,
+              "bedrooms": null,
+              "bathrooms": null,
+              "min_price": null,
+              "max_price": null,
+              "view": null,
+              "sort_by": "price",
+              "sort_order": "asc"
+            }}
 
 User query:
 {user_query}
@@ -316,18 +323,18 @@ def format_matches_for_prompt(matches):
 
         blocks.append(
             f"""
-Apartment ID: {apartment.get("apartment_id")}
-Title: {apartment.get("title")}
-City: {apartment.get("city")}
-Area: {apartment.get("area")}
-Bedrooms: {apartment.get("bedrooms")}
-Bathrooms: {apartment.get("bathrooms")}
-Area: {apartment.get("area_sqm")} sqm
-View: {apartment.get("view")}
-Price: {apartment.get("price")} EGP
-Amenities: {apartment.get("amenities")}
-Description: {apartment.get("description")}
-""".strip()
+            Apartment ID: {apartment.get("apartment_id")}
+            Title: {apartment.get("title")}
+            City: {apartment.get("city")}
+            Area: {apartment.get("area")}
+            Bedrooms: {apartment.get("bedrooms")}
+            Bathrooms: {apartment.get("bathrooms")}
+            Area: {apartment.get("area_sqm")} sqm
+            View: {apartment.get("view")}
+            Price: {apartment.get("price")} EGP
+            Amenities: {apartment.get("amenities")}
+            Description: {apartment.get("description")}
+            """.strip()
         )
 
     if not blocks:
@@ -347,51 +354,51 @@ def generate_answer(user_query, matches):
     context = format_matches_for_prompt(matches)
 
     prompt = f"""
-You are a real-estate recommendation assistant for Dorra.
-
-Use only the contexts below.
-
-STRICT RULES:
-1. Recommend only apartments from Apartment Context.
-2. Never invent apartment IDs, prices, locations, amenities, or features.
-3. Every recommendation must include apartment_id exactly as written in Apartment Context.
-4. Keep the recommendations in the exact same order as the apartments appear in Apartment Context.
-5. Do not add apartments that are not present in Apartment Context.
-6. The apartments are already sorted by price from lowest to highest.
-7. For each apartment, write one short sentence explaining why it may fit the user's request.
-8. If an apartment from the above does not match the user query, remove it.
-
-Return JSON only in this exact shape:
-{{
-  "intro": "string",
-  "recommendations": [
-    {{
-      "apartment_id": "string",
-      "fit_reason": "string"
-    }}
-  ],
-  "company_note": "string"
-}}
-
-Writing rules:
-- "intro" should briefly say that the apartments are sorted by price from lowest to highest.
-- "fit_reason" should be one short, user-friendly sentence.
-- Base each fit_reason only on the user query and the actual apartment details.
-- If no apartments are suitable, return an empty recommendations list and explain that in "intro".
-
-User query:
-{user_query}
-
-Apartment Context:
-{context}
-""".strip()
+            You are a real-estate recommendation assistant for Dorra.
+            
+            Use only the contexts below.
+            
+            STRICT RULES:
+            1. Recommend only apartments from Apartment Context.
+            2. Never invent apartment IDs, prices, locations, amenities, or features.
+            3. Every recommendation must include apartment_id exactly as written in Apartment Context.
+            4. Keep the recommendations in the exact same order as the apartments appear in Apartment Context.
+            5. Do not add apartments that are not present in Apartment Context.
+            6. The apartments are already sorted in the order they should be presented to the user.
+            7. For each apartment, write one short sentence explaining why it may fit the user's request.
+            8. If an apartment from the above does not match the user query, remove it.
+            
+            Return JSON only in this exact shape:
+            {{
+              "intro": "string",
+              "recommendations": [
+                {{
+                  "apartment_id": "string",
+                  "fit_reason": "string"
+                }}
+              ],
+              "company_note": "string"
+            }}
+            
+            Writing rules:
+            - "intro" should briefly describe the returned apartments.
+            - "fit_reason" should be one short, user-friendly sentence.
+            - Base each fit_reason only on the user query and the actual apartment details.
+            - If no apartments are suitable, return an empty recommendations list and explain that in "intro".
+            
+            User query:
+            {user_query}
+            
+            Apartment Context:
+            {context}
+            """.strip()
 
     response = llm.invoke(prompt)
     parsed = parse_json(response.content.strip())
 
     if not isinstance(parsed, dict):
         return {
-            "intro": "I found these apartments sorted by price from lowest to highest.",
+            "intro": "I found matching apartments for your request.",
             "recommendations": [],
         }
 
@@ -491,8 +498,8 @@ def render_reply(final_output):
         parts.append(intro)
 
     for index, apartment in enumerate(recommendations, start=1):
-        bedrooms = int(apartment.get("bedrooms"))
-        bathrooms = int(apartment.get("bathrooms"))
+        bedrooms = apartment.get("bedrooms")
+        bathrooms = apartment.get("bathrooms")
 
         parts.append(
             f"{index}. ID: {apartment.get('apartment_id', '')}\n"
@@ -525,19 +532,19 @@ def company_info_stream_to_writer(user_query: str) -> str:
     )
 
     prompt = f"""
-You are a helpful assistant for Dorra.
-
-Answer only using the company information below.
-Do not invent facts.
-If something is not in the company information, say that clearly.
-Write a natural user-facing answer.
-
-Company information:
-{json.dumps(company_info, ensure_ascii=False, indent=2)}
-
-User question:
-{user_query}
-""".strip()
+            You are a helpful assistant for Dorra.
+            
+            Answer only using the company information below.
+            Do not invent facts.
+            If something is not in the company information, say that clearly.
+            Write a natural user-facing answer.
+            
+            Company information:
+            {json.dumps(company_info, ensure_ascii=False, indent=2)}
+            
+            User question:
+            {user_query}
+            """.strip()
 
     collected = []
 
