@@ -21,8 +21,8 @@ app.add_middleware(
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.session_secret,
-    same_site="lax",
-    https_only=False,
+    same_site="none",
+    https_only=True,
 )
 
 app.include_router(admin_router)
