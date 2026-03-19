@@ -138,7 +138,11 @@ def extract_meta(user_query):
             
             2) city
             - Extract the city only from the query.
-            - Ignore micro-areas, compounds, neighborhoods, and districts.
+            - If the user mentions a district, neighborhood, or sub-area, map it to the broader supported city value when clear.
+            - Examples:
+              - "5th settlement" or "fifth settlement" -> "new cairo"
+              - "tagamoa" -> "new cairo"
+              - "6 october" -> "october"
             - Keep it short, lowercase, and useful for exact matching.
             
             3) bedrooms

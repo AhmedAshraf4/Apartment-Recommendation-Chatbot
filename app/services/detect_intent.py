@@ -98,6 +98,12 @@ def detect_intent(user_query: str):
     {{"intent":"unsupported"}}
 
     Now classify this user message.
+    
+    User: In 2 hours
+    Output:
+    {{"intent":"lead"}}
+
+    Now classify this user message.
 
     User: {user_query}
     Output:
