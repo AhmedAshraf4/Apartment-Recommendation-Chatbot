@@ -11,15 +11,12 @@ from app.core.config import settings
 
 small_context_for_response = """
 
-
-
 About Dorra: Dorra is an Egyptian construction and development group.
 - Hotline: 16077
 - Email: info@dorra.com
 - Location: Courtyard, Building K, Al Shabab Rd, Second Al Sheikh Zayed, Giza Governorate, Egypt.
 
-
-Give me the "ID" of any unit you are intersted in to follow up
+To continue with any unit, please send me the ID of the apartment you are interested in.
 """
 
 
@@ -58,13 +55,351 @@ def parse_json(text):
     return None
 
 
+def normalize_city(city):
+    if not city:
+        return None
+
+    city = str(city).strip().lower()
+    city = city.replace("-", " ")
+    city = city.replace("_", " ")
+    city = " ".join(city.split())
+
+    aliases = {
+        # Sheikh Zayed
+        "zayed": "sheikh zayed",
+        "sheikh zayed": "sheikh zayed",
+        "el sheikh zayed": "sheikh zayed",
+        "al sheikh zayed": "sheikh zayed",
+        "shaikh zayed": "sheikh zayed",
+        "shiekh zayed": "sheikh zayed",
+        "shaykh zayed": "sheikh zayed",
+        "sheik zayed": "sheikh zayed",
+        "sheekh zayed": "sheikh zayed",
+        "zayed city": "sheikh zayed",
+        "zayed egypt": "sheikh zayed",
+        "مدينة الشيخ زايد": "sheikh zayed",
+        "الشيخ زايد": "sheikh zayed",
+        "زايد": "sheikh zayed",
+
+        # October
+        "october": "october",
+        "6 october": "october",
+        "6th october": "october",
+        "6 october city": "october",
+        "6th of october": "october",
+        "sixth of october": "october",
+        "october city": "october",
+        "مدينة 6 اكتوبر": "october",
+        "٦ اكتوبر": "october",
+        "6 اكتوبر": "october",
+        "اكتوبر": "october",
+
+        # New Cairo / Tagamoa / Fifth Settlement
+        "new cairo": "new cairo",
+        "el new cairo": "new cairo",
+        "al new cairo": "new cairo",
+        "new cairo city": "new cairo",
+        "tagamoa": "new cairo",
+        "tagammoa": "new cairo",
+        "tagamoua": "new cairo",
+        "tagamo3": "new cairo",
+        "tagamoa el khames": "new cairo",
+        "tagamoa khames": "new cairo",
+        "el tagamoa": "new cairo",
+        "al tagamoa": "new cairo",
+        "fifth settlement": "new cairo",
+        "5th settlement": "new cairo",
+        "fifth district": "new cairo",
+        "settlement": "new cairo",
+        "التجمع": "new cairo",
+        "التجمع الخامس": "new cairo",
+        "القاهرة الجديدة": "new cairo",
+        "new cairo egypt": "new cairo",
+
+        # Mostakbal City
+        "mostakbal city": "mostakbal city",
+        "mustaqbal city": "mostakbal city",
+        "mostaqbal city": "mostakbal city",
+        "el mostakbal city": "mostakbal city",
+        "مدينة المستقبل": "mostakbal city",
+        "المستقبل": "mostakbal city",
+
+        # Madinaty
+        "madinaty": "madinaty",
+        "madinty": "madinaty",
+        "el madinaty": "madinaty",
+        "مدينتي": "madinaty",
+
+        # Rehab
+        "rehab": "rehab",
+        "al rehab": "rehab",
+        "el rehab": "rehab",
+        "rehab city": "rehab",
+        "مدينة الرحاب": "rehab",
+        "الرحاب": "rehab",
+
+        # Shorouk
+        "shorouk": "shorouk",
+        "el shorouk": "shorouk",
+        "al shorouk": "shorouk",
+        "shrouk": "shorouk",
+        "shorouq": "shorouk",
+        "shorouk city": "shorouk",
+        "مدينة الشروق": "shorouk",
+        "الشروق": "shorouk",
+
+        # Badr
+        "badr": "badr",
+        "badr city": "badr",
+        "مدينة بدر": "badr",
+        "بدر": "badr",
+
+        # Obour
+        "obour": "obour",
+        "el obour": "obour",
+        "al obour": "obour",
+        "ubour": "obour",
+        "obour city": "obour",
+        "مدينة العبور": "obour",
+        "العبور": "obour",
+
+        # Heliopolis
+        "heliopolis": "heliopolis",
+        "helioplis": "heliopolis",
+        "masr el gedida": "heliopolis",
+        "masr al gedida": "heliopolis",
+        "misr el gedida": "heliopolis",
+        "misr al gadida": "heliopolis",
+        "new heliopolis": "heliopolis",
+        "مصر الجديدة": "heliopolis",
+        "هليوبوليس": "heliopolis",
+
+        # Nasr City
+        "nasr city": "nasr city",
+        "madinet nasr": "nasr city",
+        "madinat nasr": "nasr city",
+        "مدينة نصر": "nasr city",
+        "nasr": "nasr city",
+
+        # Maadi
+        "maadi": "maadi",
+        "el maadi": "maadi",
+        "al maadi": "maadi",
+        "ma'adi": "maadi",
+        "المعادي": "maadi",
+
+        # Mokattam
+        "mokattam": "mokattam",
+        "mokatam": "mokattam",
+        "muqattam": "mokattam",
+        "المقطم": "mokattam",
+
+        # New Capital
+        "new capital": "new capital",
+        "administrative capital": "new capital",
+        "new administrative capital": "new capital",
+        "nac": "new capital",
+        "العاصمة الادارية": "new capital",
+        "العاصمة الإدارية": "new capital",
+        "العاصمة الجديدة": "new capital",
+
+        # Ain Sokhna
+        "ain sokhna": "ain sokhna",
+        "ain sukhna": "ain sokhna",
+        "sokhna": "ain sokhna",
+        "sukhna": "ain sokhna",
+        "العين السخنة": "ain sokhna",
+
+        # North Coast
+        "north coast": "north coast",
+        "northcoast": "north coast",
+        "sahel": "north coast",
+        "el sahel": "north coast",
+        "al sahel": "north coast",
+        "sahel shamaly": "north coast",
+        "sahel shamal": "north coast",
+        "north الساحل": "north coast",
+        "الساحل": "north coast",
+        "الساحل الشمالي": "north coast",
+
+        # Alexandria
+        "alex": "alexandria",
+        "alexandria": "alexandria",
+        "iskandria": "alexandria",
+        "اسكندرية": "alexandria",
+        "الإسكندرية": "alexandria",
+        "alexandria egypt": "alexandria",
+
+        # Giza
+        "giza": "giza",
+        "el giza": "giza",
+        "al giza": "giza",
+        "جيزة": "giza",
+        "الجيزة": "giza",
+
+        # Zamalek
+        "zamalek": "zamalek",
+        "الزمالك": "zamalek",
+
+        # Mohandessin
+        "mohandessin": "mohandessin",
+        "mohandiseen": "mohandessin",
+        "mohandesen": "mohandessin",
+        "المهندسين": "mohandessin",
+
+        # Dokki
+        "dokki": "dokki",
+        "doqi": "dokki",
+        "الدقي": "dokki",
+
+        # Haram
+        "haram": "haram",
+        "el haram": "haram",
+        "al haram": "haram",
+        "الهرم": "haram",
+
+        # Faisal
+        "faisal": "faisal",
+        "faysal": "faisal",
+        "فيصل": "faisal",
+
+        # Sheikh Zayed subareas
+        "beverly hills": "sheikh zayed",
+        "beverly": "sheikh zayed",
+        "karma": "sheikh zayed",
+        "allegria": "sheikh zayed",
+        "etapa": "sheikh zayed",
+        "zed": "sheikh zayed",
+        "zed west": "sheikh zayed",
+        "arkan": "sheikh zayed",
+
+        # New Cairo subareas
+        "golden square": "new cairo",
+        "south academy": "new cairo",
+        "north investors": "new cairo",
+        "south investors": "new cairo",
+        "lotus": "new cairo",
+        "the lotus": "new cairo",
+        "lotus north": "new cairo",
+        "lotus south": "new cairo",
+        "andalus": "new cairo",
+        "narges": "new cairo",
+        "narjes": "new cairo",
+        "yasmeen": "new cairo",
+        "yasmine": "new cairo",
+        "banafseg": "new cairo",
+        "البنفسج": "new cairo",
+        "بيت الوطن": "new cairo",
+        "beit el watan": "new cairo",
+        "beit al watan": "new cairo",
+        "hyde park": "new cairo",
+        "mountain view icity": "new cairo",
+        "mivida": "new cairo",
+
+        # North Coast subareas
+        "marassi": "north coast",
+        "sidi abdelrahman": "north coast",
+        "sidi abd el rahman": "north coast",
+        "hacienda": "north coast",
+        "hacienda bay": "north coast",
+        "ras el hekma": "north coast",
+        "ras al hikma": "north coast",
+        "almaza bay": "north coast",
+        "amwaj": "north coast",
+
+        # Ain Sokhna subareas
+        "galala": "ain sokhna",
+        "el galala": "ain sokhna",
+        "mountain view sokhna": "ain sokhna",
+        "porto sokhna": "ain sokhna",
+        "jaz little venice": "ain sokhna",
+
+        # New Capital subareas
+        "r7": "new capital",
+        "r8": "new capital",
+        "mu23": "new capital",
+        "downtown new capital": "new capital",
+        "financial district": "new capital",
+        "government district": "new capital",
+    }
+
+    return aliases.get(city, city)
+
+
+def get_city_aliases(city):
+    normalized = normalize_city(city)
+
+    alias_groups = {
+        "sheikh zayed": [
+            "sheikh zayed",
+            "zayed",
+            "el sheikh zayed",
+            "al sheikh zayed",
+            "الشيخ زايد",
+            "زايد",
+        ],
+        "october": [
+            "october",
+            "6 october",
+            "6th october",
+            "6th of october",
+            "october city",
+            "٦ اكتوبر",
+            "6 اكتوبر",
+            "اكتوبر",
+        ],
+        "new cairo": [
+            "new cairo",
+            "tagamoa",
+            "tagammoa",
+            "tagamoua",
+            "tagamo3",
+            "fifth settlement",
+            "5th settlement",
+            "التجمع",
+            "التجمع الخامس",
+            "القاهرة الجديدة",
+        ],
+        "north coast": [
+            "north coast",
+            "sahel",
+            "el sahel",
+            "al sahel",
+            "sahel shamaly",
+            "sahel shamal",
+            "الساحل",
+            "الساحل الشمالي",
+        ],
+        "ain sokhna": [
+            "ain sokhna",
+            "ain sukhna",
+            "sokhna",
+            "sukhna",
+            "العين السخنة",
+        ],
+        "new capital": [
+            "new capital",
+            "administrative capital",
+            "new administrative capital",
+            "nac",
+            "العاصمة الادارية",
+            "العاصمة الإدارية",
+            "العاصمة الجديدة",
+        ],
+    }
+
+    return alias_groups.get(normalized, [normalized])
+
+
 def clean_filters(filters):
     if not isinstance(filters, dict):
         return {
             "title": None,
             "city": None,
-            "bedrooms": None,
-            "bathrooms": None,
+            "min_bedrooms": None,
+            "max_bedrooms": None,
+            "min_bathrooms": None,
+            "max_bathrooms": None,
             "min_price": None,
             "max_price": None,
             "view": None,
@@ -82,24 +417,227 @@ def clean_filters(filters):
     else:
         sort_by = "price"
 
-    if raw_sort_order in {"desc", "descending", "high_to_low", "highest", "largest", "biggest"}:
+    if raw_sort_order in {
+        "desc",
+        "descending",
+        "high_to_low",
+        "highest",
+        "largest",
+        "biggest",
+    }:
         sort_order = "desc"
-    elif raw_sort_order in {"asc", "ascending", "low_to_high", "lowest", "smallest", "cheapest"}:
+    elif raw_sort_order in {
+        "asc",
+        "ascending",
+        "low_to_high",
+        "lowest",
+        "smallest",
+        "cheapest",
+    }:
         sort_order = "asc"
     else:
         sort_order = "asc"
 
     return {
         "title": filters.get("title"),
-        "city": filters.get("city"),
-        "bedrooms": filters.get("bedrooms"),
-        "bathrooms": filters.get("bathrooms"),
+        "city": normalize_city(filters.get("city")),
+        "min_bedrooms": filters.get("min_bedrooms"),
+        "max_bedrooms": filters.get("max_bedrooms"),
+        "min_bathrooms": filters.get("min_bathrooms"),
+        "max_bathrooms": filters.get("max_bathrooms"),
         "min_price": filters.get("min_price"),
         "max_price": filters.get("max_price"),
         "view": filters.get("view"),
         "sort_by": sort_by,
         "sort_order": sort_order,
     }
+
+
+def get_sorting_sentence(filters):
+    sort_by = filters.get("sort_by", "price")
+    sort_order = filters.get("sort_order", "asc")
+
+    if sort_by == "area_sqm":
+        if sort_order == "desc":
+            return "The apartments below are sorted by area from largest to smallest."
+        return "The apartments below are sorted by area from smallest to largest."
+
+    if sort_order == "desc":
+        return "The apartments below are sorted by price from highest to lowest."
+    return "The apartments below are sorted by price from lowest to highest."
+
+
+def build_display_rules(user_query, filters, matches):
+    query = str(user_query or "").lower()
+    query = " ".join(query.split())
+
+    explicit_sorting_request = any(
+        phrase in query
+        for phrase in [
+            "first",
+            "sorted",
+            "sort by",
+            "ascending",
+            "descending",
+            "low to high",
+            "high to low",
+            "lowest to highest",
+            "highest to lowest",
+            "cheapest first",
+            "most expensive first",
+            "largest first",
+            "smallest first",
+        ]
+    )
+
+    wants_single = False
+    single_reason = None
+
+    cheapest_markers = [
+        "cheapest",
+        "lowest price",
+        "lowest priced",
+        "least expensive",
+    ]
+    expensive_markers = [
+        "most expensive",
+        "highest price",
+        "highest priced",
+        "priciest",
+    ]
+    largest_markers = [
+        "largest",
+        "biggest",
+        "most spacious",
+    ]
+    smallest_markers = [
+        "smallest",
+        "least spacious",
+    ]
+
+    apartment_nouns = [
+        "apartment",
+        "unit",
+        "property",
+        "option",
+        "one",
+    ]
+
+    single_request_markers = [
+        "show me",
+        "give me",
+        "i want",
+        "i need",
+        "only",
+        "just",
+        "what is",
+        "what's",
+        "find me",
+    ]
+
+    def has_any(markers):
+        return any(marker in query for marker in markers)
+
+    def has_single_extreme(extreme_markers):
+        return (
+            has_any(extreme_markers)
+            and (
+                has_any(single_request_markers)
+                or has_any(apartment_nouns)
+            )
+        )
+
+    if not explicit_sorting_request:
+        if has_single_extreme(cheapest_markers):
+            wants_single = True
+            single_reason = "cheapest"
+        elif has_single_extreme(expensive_markers):
+            wants_single = True
+            single_reason = "most_expensive"
+        elif has_single_extreme(largest_markers):
+            wants_single = True
+            single_reason = "largest_area"
+        elif has_single_extreme(smallest_markers):
+            wants_single = True
+            single_reason = "smallest_area"
+
+    requested_view = filters.get("view")
+
+    requested_amenities = []
+    known_amenities = [
+        "garden",
+        "pool",
+        "swimming pool",
+        "clubhouse",
+        "parking",
+        "gym",
+        "security",
+        "lake view",
+        "sea view",
+        "landscape",
+        "terrace",
+        "elevator",
+    ]
+
+    for amenity in known_amenities:
+        if amenity in query:
+            requested_amenities.append(amenity)
+
+    return {
+        "hard_constraints_already_applied": True,
+        "explicit_sorting_request": explicit_sorting_request,
+        "wants_single": wants_single,
+        "single_reason": single_reason,
+        "requested_view": requested_view,
+        "requested_amenities": requested_amenities,
+    }
+
+
+def apply_display_rules(matches, display_rules):
+    if not matches:
+        return matches
+
+    if display_rules.get("explicit_sorting_request"):
+        return matches
+
+    if not display_rules.get("wants_single"):
+        return matches
+
+    reason = display_rules.get("single_reason")
+
+    if reason == "cheapest":
+        return [
+            min(
+                matches,
+                key=lambda item: float(item.get("price")) if item.get("price") is not None else float("inf"),
+            )
+        ]
+
+    if reason == "most_expensive":
+        return [
+            max(
+                matches,
+                key=lambda item: float(item.get("price")) if item.get("price") is not None else float("-inf"),
+            )
+        ]
+
+    if reason == "largest_area":
+        return [
+            max(
+                matches,
+                key=lambda item: float(item.get("area_sqm")) if item.get("area_sqm") is not None else float("-inf"),
+            )
+        ]
+
+    if reason == "smallest_area":
+        return [
+            min(
+                matches,
+                key=lambda item: float(item.get("area_sqm")) if item.get("area_sqm") is not None else float("inf"),
+            )
+        ]
+
+    return matches
 
 
 @traceable(name="extract_meta")
@@ -111,96 +649,121 @@ def extract_meta(user_query):
     )
 
     prompt = f"""
-            You are a strict information-extraction engine for apartment search queries.
-            
-            Your job is to extract only the supported filters from the user query
-            and return exactly one valid JSON object.
-            
-            OUTPUT RULES:
-            - Return JSON only.
-            - Do not add markdown, code fences, comments, or explanations.
-            - Return exactly these keys and no others:
-              "title", "city", "bedrooms", "bathrooms", "min_price", "max_price", "view", "sort_by", "sort_order"
-            - Use null for missing, unclear, or unsupported values.
-            - Prices must be integers in EGP with no commas, symbols, or words.
-            
-            FIELD RULES:
-            
-            1) title
-            - Extract the property type only if explicitly stated or clearly implied.
-            - Allowed values only:
-              - "apartment"
-              - "studio"
-              - "townhouse"
-              - "penthouse"
-              - "duplex"
-            - If no valid property type is clearly mentioned, return null.
-            
-            2) city
-            - Extract the city only from the query.
-            - If the user mentions a district, neighborhood, or sub-area, map it to the broader supported city value when clear.
-            - Examples:
-              - "5th settlement" or "fifth settlement" -> "new cairo"
-              - "tagamoa" -> "new cairo"
-              - "6 october" -> "october"
-            - Keep it short, lowercase, and useful for exact matching.
-            
-            3) bedrooms
-            - Extract only when the query clearly asks for an exact bedroom count.
-            - If the query uses comparative language that cannot be represented exactly, return null.
-            
-            4) bathrooms
-            - Extract only when the query clearly asks for an exact bathroom count.
-            - If the query uses comparative language that cannot be represented exactly, return null.
-            
-            5) price
-            - Interpret prices in EGP.
-            - Convert shorthand into full integers.
-            - If only one side of the range is stated, leave the other side null.
-            
-            6) view
-            - Extract only if explicitly mentioned.
-            - Return a short normalized keyword, not a full phrase.
-            
-            7) sorting
-            - Extract sorting preference if the user mentions ranking or ordering.
-            - Allowed "sort_by" values only:
-              - "price"
-              - "area_sqm"
-            - Allowed "sort_order" values only:
-              - "asc"
-              - "desc"
-            - If the user does not mention sorting, default to:
-              - "sort_by": "price"
-              - "sort_order": "asc"
-            
-            Examples:
-            - "cheapest first" -> "sort_by": "price", "sort_order": "asc"
-            - "highest price first" -> "sort_by": "price", "sort_order": "desc"
-            - "biggest area first" -> "sort_by": "area_sqm", "sort_order": "desc"
-            - "smallest area first" -> "sort_by": "area_sqm", "sort_order": "asc"
-            - "sort by area descending" -> "sort_by": "area_sqm", "sort_order": "desc"
-            
-            8) unsupported preferences
-            - Ignore anything that is not representable in the schema.
-            - Do not turn these into any filter.
-            
-            9) no guessing
-            - Do not infer values that are not clearly stated.
-            - Do not guess title, city, price, bedrooms, bathrooms, or view.
-            
-            Return this exact JSON shape:
-            {{
-              "title": null,
-              "city": null,
-              "bedrooms": null,
-              "bathrooms": null,
-              "min_price": null,
-              "max_price": null,
-              "view": null,
-              "sort_by": "price",
-              "sort_order": "asc"
-            }}
+You are a strict information-extraction engine for apartment search queries.
+
+Your job is to extract only the supported filters from the user query
+and return exactly one valid JSON object.
+
+OUTPUT RULES:
+- Return JSON only.
+- Do not add markdown, code fences, comments, or explanations.
+- Return exactly these keys and no others:
+  "title", "city", "min_bedrooms", "max_bedrooms", "min_bathrooms", "max_bathrooms", "min_price", "max_price", "view", "sort_by", "sort_order"
+- Use null for missing, unclear, or unsupported values.
+- Prices must be integers in EGP with no commas, symbols, or words.
+- Bedroom and bathroom bounds must be integers when present.
+
+FIELD RULES:
+
+1) title
+- Extract the property type only if explicitly stated or clearly implied.
+- Allowed values only:
+  - "apartment"
+  - "studio"
+  - "townhouse"
+  - "penthouse"
+  - "duplex"
+- If no valid property type is clearly mentioned, return null.
+
+2) city
+- Extract the city or area in a normalized searchable form.
+- If the user mentions a district, neighborhood, compound area, or shorthand, map it to the broader supported value when clear.
+- Examples:
+  - "5th settlement" or "fifth settlement" -> "new cairo"
+  - "tagamoa" or "tagamoa el khames" -> "new cairo"
+  - "new cairo" -> "new cairo"
+  - "6 october" or "october" -> "october"
+  - "zayed" -> "sheikh zayed"
+  - "sheikh zayed" -> "sheikh zayed"
+  - "el sheikh zayed" -> "sheikh zayed"
+- Keep it short, lowercase, and normalized for matching.
+- If location is unclear, return null.
+
+3) bedrooms
+- Extract bedroom requirements as lower/upper bounds.
+- Use:
+  - min_bedrooms for phrases like:
+    "at least 3 bedrooms", "3+ bedrooms", "3 or more bedrooms", "minimum 3 bedrooms"
+  - max_bedrooms for phrases like:
+    "up to 3 bedrooms", "at most 3 bedrooms", "3 bedrooms or less", "max 3 bedrooms"
+  - both min_bedrooms and max_bedrooms when an exact value is stated:
+    "3 bedrooms" -> min_bedrooms=3, max_bedrooms=3
+  - both min_bedrooms and max_bedrooms when a range is stated:
+    "2 to 4 bedrooms" -> min_bedrooms=2, max_bedrooms=4
+- If no clear bedroom requirement exists, both should be null.
+
+4) bathrooms
+- Extract bathroom requirements as lower/upper bounds.
+- Use:
+  - min_bathrooms for phrases like:
+    "at least 2 bathrooms", "2+ bathrooms", "2 or more bathrooms", "minimum 2 bathrooms"
+  - max_bathrooms for phrases like:
+    "up to 2 bathrooms", "at most 2 bathrooms", "2 bathrooms or less", "max 2 bathrooms"
+  - both min_bathrooms and max_bathrooms when an exact value is stated:
+    "2 bathrooms" -> min_bathrooms=2, max_bathrooms=2
+  - both min_bathrooms and max_bathrooms when a range is stated:
+    "1 to 3 bathrooms" -> min_bathrooms=1, max_bathrooms=3
+- If no clear bathroom requirement exists, both should be null.
+
+5) price
+- Interpret prices in EGP.
+- Convert shorthand into full integers.
+- If only one side of the range is stated, leave the other side null.
+
+6) view
+- Extract only if explicitly mentioned.
+- Return a short normalized keyword, not a full phrase.
+
+7) sorting
+- Extract sorting preference if the user mentions ranking or ordering.
+- Allowed "sort_by" values only:
+  - "price"
+  - "area_sqm"
+- Allowed "sort_order" values only:
+  - "asc"
+  - "desc"
+- If the user does not mention sorting, default to:
+  - "sort_by": "price"
+  - "sort_order": "asc"
+
+Examples:
+- "cheapest first" -> "sort_by": "price", "sort_order": "asc"
+- "highest price first" -> "sort_by": "price", "sort_order": "desc"
+- "biggest area first" -> "sort_by": "area_sqm", "sort_order": "desc"
+- "smallest area first" -> "sort_by": "area_sqm", "sort_order": "asc"
+
+8) unsupported preferences
+- Ignore anything that is not representable in the schema.
+- Do not turn these into any filter.
+
+9) no guessing
+- Do not infer values that are not clearly stated.
+- Do not guess title, city, price, bedroom bounds, bathroom bounds, or view.
+
+Return this exact JSON shape:
+{{
+  "title": null,
+  "city": null,
+  "min_bedrooms": null,
+  "max_bedrooms": null,
+  "min_bathrooms": null,
+  "max_bathrooms": null,
+  "min_price": null,
+  "max_price": null,
+  "view": null,
+  "sort_by": "price",
+  "sort_order": "asc"
+}}
 
 User query:
 {user_query}
@@ -218,13 +781,23 @@ def build_pinecone_filter(filters):
         rules.append({"title": {"$eq": str(filters["title"]).strip().lower()}})
 
     if filters.get("city"):
-        rules.append({"city": {"$eq": str(filters["city"]).strip().lower()}})
+        city_values = get_city_aliases(filters["city"])
+        if len(city_values) == 1:
+            rules.append({"city": {"$eq": city_values[0]}})
+        else:
+            rules.append({"$or": [{"city": {"$eq": value}} for value in city_values]})
 
-    if filters.get("bedrooms") is not None:
-        rules.append({"bedrooms": {"$eq": int(filters["bedrooms"])}})
+    if filters.get("min_bedrooms") is not None:
+        rules.append({"bedrooms": {"$gte": int(filters["min_bedrooms"])}})
 
-    if filters.get("bathrooms") is not None:
-        rules.append({"bathrooms": {"$eq": int(filters["bathrooms"])}})
+    if filters.get("max_bedrooms") is not None:
+        rules.append({"bedrooms": {"$lte": int(filters["max_bedrooms"])}})
+
+    if filters.get("min_bathrooms") is not None:
+        rules.append({"bathrooms": {"$gte": int(filters["min_bathrooms"])}})
+
+    if filters.get("max_bathrooms") is not None:
+        rules.append({"bathrooms": {"$lte": int(filters["max_bathrooms"])}})
 
     if filters.get("min_price") is not None:
         rules.append({"price": {"$gte": float(filters["min_price"])}})
@@ -253,14 +826,25 @@ def sort_matches(matches, filters):
     sort_by = filters.get("sort_by", "price")
     sort_order = filters.get("sort_order", "asc")
     reverse = sort_order == "desc"
+    requested_view = filters.get("view")
 
-    def sort_value(item):
+    def numeric_value(item):
         value = item.get(sort_by)
         if value is None:
             return float("-inf") if reverse else float("inf")
         return float(value)
 
-    matches.sort(key=sort_value, reverse=reverse)
+    if requested_view:
+        matching = [m for m in matches if m.get("view_match")]
+        non_matching = [m for m in matches if not m.get("view_match")]
+
+        matching.sort(key=numeric_value, reverse=reverse)
+        non_matching.sort(key=numeric_value, reverse=reverse)
+
+        matches[:] = matching + non_matching
+        return matches
+
+    matches.sort(key=numeric_value, reverse=reverse)
     return matches
 
 
@@ -290,8 +874,9 @@ def search_apartments(user_query, filters, top_k):
     for match in results.matches:
         metadata = match.metadata or {}
 
-        if not matches_view(metadata.get("view", ""), filters.get("view")):
-            continue
+        apartment_view = metadata.get("view", "")
+        requested_view = filters.get("view")
+        view_match = matches_view(apartment_view, requested_view)
 
         matches.append(
             {
@@ -303,7 +888,8 @@ def search_apartments(user_query, filters, top_k):
                 "bedrooms": metadata.get("bedrooms"),
                 "bathrooms": metadata.get("bathrooms"),
                 "area_sqm": metadata.get("area_sqm"),
-                "view": metadata.get("view"),
+                "view": apartment_view,
+                "view_match": view_match,
                 "price": metadata.get("price"),
                 "amenities": metadata.get("amenities"),
                 "agent_email": metadata.get("agent_email"),
@@ -318,13 +904,13 @@ def search_apartments(user_query, filters, top_k):
 
 def format_matches_for_prompt(matches):
     if not matches:
-        return "No apartments were retrieved."
+        return "No apartments were retrieved for this query."
 
     if isinstance(matches, dict):
         matches = [matches]
 
     if not isinstance(matches, list):
-        return "No apartments were retrieved."
+        return "No apartments were retrieved for this query."
 
     blocks = []
     for apartment in matches:
@@ -333,203 +919,150 @@ def format_matches_for_prompt(matches):
 
         blocks.append(
             f"""
-            Apartment ID: {apartment.get("apartment_id")}
-            Title: {apartment.get("title")}
-            City: {apartment.get("city")}
-            Area: {apartment.get("area")}
-            Bedrooms: {apartment.get("bedrooms")}
-            Bathrooms: {apartment.get("bathrooms")}
-            Area: {apartment.get("area_sqm")} sqm
-            View: {apartment.get("view")}
-            Price: {apartment.get("price")} EGP
-            Amenities: {apartment.get("amenities")}
-            Description: {apartment.get("description")}
-            """.strip()
+Apartment ID: {apartment.get("apartment_id")}
+Title: {apartment.get("title")}
+City: {apartment.get("city")}
+Area Name: {apartment.get("area")}
+Bedrooms: {apartment.get("bedrooms")}
+Bathrooms: {apartment.get("bathrooms")}
+Area (sqm): {apartment.get("area_sqm")}
+View: {apartment.get("view")}
+Price: {apartment.get("price")} EGP
+Amenities: {apartment.get("amenities")}
+Description: {apartment.get("description")}
+""".strip()
         )
 
     if not blocks:
-        return "No apartments were retrieved."
+        return "No apartments were retrieved for this query."
 
     return "\n\n".join(blocks)
 
 
-@traceable(name="generate_answer")
-def generate_answer(user_query, matches):
+@traceable(name="search_reply_stream_to_writer")
+def search_reply_stream_to_writer(user_query: str, filters: dict, matches: list) -> str:
+    writer = get_stream_writer()
+
     llm = ChatOpenAI(
         model=settings.openai_model,
         api_key=settings.openai_api_key,
         temperature=0.2,
     )
 
-    context = format_matches_for_prompt(matches)
+    display_rules = build_display_rules(user_query, filters, matches)
+    selected_matches = apply_display_rules(matches, display_rules)
+    context = format_matches_for_prompt(selected_matches)
+    sorting_sentence = get_sorting_sentence(filters)
 
     prompt = f"""
-            You are a real-estate recommendation assistant for Dorra.
-            
-            Use only the contexts below.
-            
-            STRICT RULES:
-            1. Recommend only apartments from Apartment Context.
-            2. Never invent apartment IDs, prices, locations, amenities, or features.
-            3. Every recommendation must include apartment_id exactly as written in Apartment Context.
-            4. Keep the recommendations in the exact same order as the apartments appear in Apartment Context.
-            5. Do not add apartments that are not present in Apartment Context.
-            6. The apartments are already sorted in the order they should be presented to the user.
-            7. For each apartment, write one short sentence explaining why it may fit the user's request.
-            8. Sorting instructions are only for ordering and must not be used as a reason to remove apartments.
-            9. If user said "a townhouse" for example still return more than one option
-            10. Only return the cheapest or most expensive unit if it was explicitly mentioned        
-            Return JSON only in this exact shape:
-            {{
-              "intro": "string",
-              "recommendations": [
-                {{
-                  "apartment_id": "string",
-                  "fit_reason": "string"
-                }}
-              ],
-              "company_note": "string"
-            }}
-            
-            Writing rules:
-            - "intro" should briefly describe the returned apartments.
-            - "fit_reason" should be one short, user-friendly sentence.
-            - Base each fit_reason only on the user query and the actual apartment details.
-            - If no apartments are suitable, return an empty recommendations list and explain that in "intro".
-            
-            User query:
-            {user_query}
-            
-            Apartment Context:
-            {context}
-            """.strip()
+You are Dorra's apartment recommendation assistant.
 
-    response = llm.invoke(prompt)
-    parsed = parse_json(response.content.strip())
+Your job is to write the FINAL user-facing reply directly.
 
-    if not isinstance(parsed, dict):
-        return {
-            "intro": "I found matching apartments for your request.",
-            "recommendations": [],
-        }
+You must always answer naturally, even when there are no apartments found.
+Do NOT output JSON.
+Do NOT output markdown code fences.
+Do NOT explain your hidden reasoning.
+Do NOT invent apartment IDs, prices, locations, amenities, sizes, descriptions, or views.
 
-    return parsed
+System facts:
+- The hard filtering step has already been completed by the system.
+- Hard constraints such as location, bedroom count, bathroom count, property type, and price filtering have already been handled before you received these apartments.
+- You must NOT perform a second hard-filtering pass.
 
+Critical rules:
+1. Use ONLY the apartment data provided in Apartment Context.
+2. Never mention any apartment that is not present in Apartment Context.
+3. Treat Apartment Context as the final approved result set.
+4. Do NOT remove, skip, reject, or hide apartments because of bedrooms, bathrooms, city, property type, or price constraints.
+5. Follow Display Rules exactly.
+6. If Display Rules say "explicit_sorting_request" is true, return multiple apartments in the given order, not just one.
+7. If Display Rules say "wants_single" is true, Apartment Context has already been reduced by the system to the one apartment you must present, so do not mention any additional apartment.
+8. If Display Rules say neither single nor sorting special behavior is required, present all apartments in the exact same order they appear in Apartment Context.
+9. Include the exact apartment ID for every apartment you mention.
+10. If some field is missing, do not invent it. You may say "N/A" only when needed.
+11. The FIRST sentence must clearly reflect this sorting sentence:
+{sorting_sentence}
+12. If no apartments are found, clearly say that no matching apartments were found.
+13. End with this exact note:
 
-@traceable(name="validate_output")
-def validate_output(output_data, matches):
-    valid_ids = {match["apartment_id"] for match in matches}
-    cleaned = []
+{small_context_for_response.strip()}
 
-    for recommendation in output_data.get("recommendations", []):
-        apartment_id = recommendation.get("apartment_id")
-        fit_reason = str(recommendation.get("fit_reason", "")).strip()
+14. Amenities are soft preferences only and must never be treated as mandatory filters.
+15. A missing amenity must not be used as a reason to exclude an apartment from the reply.
+16. View is a soft preference only and must not be treated as a mandatory filter in the final response.
+17. If an apartment has a matching view, you may highlight that positively.
+18. If an apartment does not have the requested view, do not exclude it or judge it negatively just for that reason.
 
-        if apartment_id in valid_ids:
-            cleaned.append(
-                {
-                    "apartment_id": apartment_id,
-                    "fit_reason": fit_reason,
-                }
-            )
+Display Rules:
+{json.dumps(display_rules, ensure_ascii=False, indent=2)}
 
-    output_data["recommendations"] = cleaned
-    return output_data
+Behavior rules for Display Rules:
+- If "explicit_sorting_request" is true:
+  - show multiple apartments
+  - preserve the exact order from Apartment Context
+  - do not collapse to one result just because words like "cheapest" or "largest" appear
+- If "wants_single" is true:
+  - the system has already selected the correct single apartment for you
+  - you must present only that one apartment from Apartment Context
+  - do not mention any additional apartment
+- If "requested_view" exists:
+  - use it only as a soft highlighting preference
+  - prefer to mention it positively when it appears
+  - do NOT remove, reject, skip, or hide apartments because the requested view is missing
+- If "requested_amenities" contains values:
+  - use them only as soft preferences for highlighting
+  - mention matching amenities when they appear
+  - do NOT remove, reject, skip, or hide any apartment because an amenity is missing
+  - amenities are not strict filters unless the system explicitly says they are
 
+When apartments exist:
+- Write one short intro sentence mentioning the sorting criteria.
+- Then present apartments according to Display Rules.
+- For each apartment include:
+  - ID
+  - Type
+  - Price
+  - Location
+  - Specs
+  - Amenities
+  - Description
+  - View
+  - One short sentence highlighting a useful visible feature from the provided apartment data
+- The highlight sentence may mention:
+  - requested view when it exists in the apartment data
+  - requested amenities when they exist in the apartment data
+  - whether it is the cheapest / most expensive / largest / smallest option in the returned set when relevant
+- If a requested amenity or requested view is missing, do not use that as a negative judgment.
+- Do not use the highlight sentence to reject apartments based on hard constraints already handled by the system.
 
-@traceable(name="merge_recommendations")
-def merge_recommendations(output_data, matches):
-    match_by_id = {match["apartment_id"]: match for match in matches}
-    items = []
+When no apartments exist:
+- Say that no matching apartments were found.
+- Suggest adjusting the search criteria.
+- End with the exact note above.
 
-    for recommendation in output_data.get("recommendations", []):
-        apartment_id = recommendation["apartment_id"]
-        if apartment_id not in match_by_id:
-            continue
+User query:
+{user_query}
 
-        apartment = match_by_id[apartment_id]
-        items.append(
-            {
-                "apartment_id": apartment_id,
-                "title": apartment.get("title"),
-                "city": apartment.get("city"),
-                "area": apartment.get("area"),
-                "bedrooms": apartment.get("bedrooms"),
-                "bathrooms": apartment.get("bathrooms"),
-                "area_sqm": apartment.get("area_sqm"),
-                "view": apartment.get("view"),
-                "price": apartment.get("price"),
-                "fit_reason": recommendation.get("fit_reason"),
-                "amenities": apartment.get("amenities"),
-                "description": apartment.get("description"),
-            }
-        )
+Extracted filters:
+{json.dumps(filters, ensure_ascii=False)}
 
-    return {
-        "intro": output_data.get("intro", ""),
-        "recommendations": items,
-        "company_note": small_context_for_response,
-    }
+Apartment Context:
+{context}
+""".strip()
 
+    collected = []
 
-def build_intro(filters, recommendations):
-    if not recommendations:
-        return "I couldn’t find matching apartments for your request."
+    for chunk in llm.stream(prompt):
+        text = chunk.content or ""
+        if not isinstance(text, str):
+            text = str(text)
 
-    sort_by = filters.get("sort_by", "price")
-    sort_order = filters.get("sort_order", "asc")
+        if text:
+            collected.append(text)
+            writer(text)
 
-    if sort_by == "area_sqm":
-        if sort_order == "desc":
-            return "I found these apartments sorted by area from largest to smallest."
-        return "I found these apartments sorted by area from smallest to largest."
-
-    if sort_order == "desc":
-        return "I found these apartments sorted by price from highest to lowest."
-    return "I found these apartments sorted by price from lowest to highest."
-
-
-@traceable(name="build_final_output")
-def build_final_output(user_query, matches, filters):
-    generated = generate_answer(user_query, matches)
-    validated = validate_output(generated, matches)
-    final_output = merge_recommendations(validated, matches)
-    final_output["intro"] = build_intro(filters, final_output.get("recommendations", []))
-    return final_output
-
-
-def render_reply(final_output):
-    intro = final_output.get("intro", "").strip()
-    recommendations = final_output.get("recommendations", [])
-    company_note = final_output.get("company_note", "").strip()
-
-    parts = []
-
-    if intro:
-        parts.append(intro)
-
-    for index, apartment in enumerate(recommendations, start=1):
-        bedrooms = apartment.get("bedrooms")
-        bathrooms = apartment.get("bathrooms")
-
-        parts.append(
-            f"{index}. ID: {apartment.get('apartment_id', '')}\n"
-            f"   Type: {apartment.get('title', 'Property').title()}\n"
-            f"   Price: {apartment.get('price', 'N/A')} EGP\n"
-            f"   Location: {apartment.get('city', 'N/A')} - {apartment.get('area', 'N/A')}\n"
-            f"   Specs: {bedrooms if bedrooms is not None else 'N/A'} bedrooms, "
-            f"{bathrooms if bathrooms is not None else 'N/A'} bathrooms, "
-            f"{apartment.get('area_sqm', 'N/A')} sqm\n"
-            f"   Amenities: {apartment.get('amenities', 'N/A')}\n"
-            f"   Description: {apartment.get('description', 'N/A')}\n"
-            f"   View: {apartment.get('view', 'N/A')}\n"
-            f"   Why it may fit you: {apartment.get('fit_reason', 'This may fit your request based on the retrieved details.')}"
-        )
-
-    if company_note:
-        parts.append(f"{company_note}")
-
-    return "\n\n".join(parts).strip()
+    return "".join(collected).strip()
 
 
 @traceable(name="company_info_stream_to_writer")
@@ -543,19 +1076,19 @@ def company_info_stream_to_writer(user_query: str) -> str:
     )
 
     prompt = f"""
-            You are a helpful assistant for Dorra.
-            
-            Answer only using the company information below.
-            Do not invent facts.
-            If something is not in the company information, say that clearly.
-            Write a natural user-facing answer.
-            
-            Company information:
-            {json.dumps(company_info, ensure_ascii=False, indent=2)}
-            
-            User question:
-            {user_query}
-            """.strip()
+You are a helpful assistant for Dorra.
+
+Answer only using the company information below.
+Do not invent facts.
+If something is not in the company information, say that clearly.
+Write a natural user-facing answer.
+
+Company information:
+{json.dumps(company_info, ensure_ascii=False, indent=2)}
+
+User question:
+{user_query}
+""".strip()
 
     collected = []
 

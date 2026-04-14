@@ -3,7 +3,12 @@ from langsmith import traceable
 from app.graph.state import ChatState
 from app.services.detect_intent import detect_intent
 from app.services.lead_prepare import (build_success_reply,build_missing_reply,extract_lead_info,get_missing_fields,merge_lead_data)
-from app.services.llm_chatbot import (extract_meta,search_apartments,build_final_output,render_reply,company_info_stream_to_writer)
+from app.services.llm_chatbot import (
+    extract_meta,
+    search_apartments,
+    search_reply_stream_to_writer,
+    company_info_stream_to_writer,
+)
 from app.services.email_gen import send_email
 
 
@@ -35,14 +40,11 @@ def search_node(state):
 
     filters = extract_meta(user_message)
     matches = search_apartments(user_message, filters, 15)
-    final_output = build_final_output(user_message, matches,filters)
-    reply = render_reply(final_output)
+    reply = search_reply_stream_to_writer(user_message, filters, matches)
 
     return {
         "filters": filters,
         "matches": matches,
-        "recommendations": final_output.get("recommendations", []),
-        "company_note": final_output.get("company_note", ""),
         "reply": reply,
         "stream_text": reply,
     }
