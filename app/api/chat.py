@@ -21,6 +21,21 @@ def to_sse_event(data: dict, event: str | None = None) -> str:
     return message
 
 
+def append_history(history, role, content):
+    history = list(history or [])
+    text = str(content or "").strip()
+    if not text:
+        return history
+
+    history.append(
+        {
+            "role": role,
+            "content": text,
+        }
+    )
+    return history
+
+
 @router.post("/stream")
 async def chat_stream(request_data: ChatRequest):
     session_id = request_data.session_id.strip()
@@ -33,7 +48,14 @@ async def chat_stream(request_data: ChatRequest):
         raise HTTPException(status_code=400, detail="message cannot be empty")
 
     saved_state = session_store.get(session_id, {})
-    chat_state = {**saved_state, "user_query": user_message}
+    existing_history = saved_state.get("chat_history", [])
+    updated_history = append_history(existing_history, "user", user_message)
+
+    chat_state = {
+        **saved_state,
+        "chat_history": updated_history,
+        "user_query": user_message,
+    }
 
     def event_generator():
         final_state = dict(chat_state)
@@ -69,7 +91,6 @@ async def chat_stream(request_data: ChatRequest):
 
                     message_text = str(message_text)
 
-                    # Only send the new delta, not the full text again
                     if message_text.startswith(sent_text):
                         delta = message_text[len(sent_text):]
                     else:
@@ -83,7 +104,13 @@ async def chat_stream(request_data: ChatRequest):
 
         except Exception as exc:
             yield to_sse_event({"error": str(exc)}, event="error")
+
         finally:
+            assistant_reply = str(final_state.get("reply") or sent_text).strip()
+            final_history = final_state.get("chat_history", updated_history)
+            final_history = append_history(final_history, "assistant", assistant_reply)
+            final_state["chat_history"] = final_history
+
             session_store[session_id] = final_state
 
     return StreamingResponse(
