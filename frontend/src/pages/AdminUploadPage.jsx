@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { apiRequest } from "../api";
+import { apiRequest, clearAdminToken } from "../api";
 import PageHeader from "../components/PageHeader";
 
 export default function AdminUploadPage() {
@@ -19,6 +19,7 @@ export default function AdminUploadPage() {
         await apiRequest("/admin/me");
         setIsCheckingSession(false);
       } catch {
+        clearAdminToken();
         navigate("/admin/login");
       }
     };
@@ -62,7 +63,10 @@ export default function AdminUploadPage() {
       await apiRequest("/admin/logout", {
         method: "POST",
       });
+    } catch {
+      // ignore logout API errors
     } finally {
+      clearAdminToken();
       navigate("/admin/login");
     }
   };
@@ -76,7 +80,6 @@ export default function AdminUploadPage() {
       <PageHeader
         title="Admin Upload"
         subtitle="Upload apartment Excel data for indexing."
-        compact={true}
       />
 
       <div className="topbar">

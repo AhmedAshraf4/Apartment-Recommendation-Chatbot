@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { apiRequest } from "../api";
+import { apiRequest, setAdminToken } from "../api";
 import PageHeader from "../components/PageHeader";
 
 export default function AdminLoginPage() {
@@ -31,7 +31,7 @@ export default function AdminLoginPage() {
     setErrorMessage("");
 
     try {
-      await apiRequest("/admin/login", {
+      const response = await apiRequest("/admin/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -41,6 +41,10 @@ export default function AdminLoginPage() {
           password,
         }),
       });
+
+      if (response?.token) {
+        setAdminToken(response.token);
+      }
 
       navigate("/admin/upload");
     } catch (error) {

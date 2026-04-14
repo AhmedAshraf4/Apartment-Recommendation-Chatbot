@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     smtp_from: str
     admin_username: str = "admin"
     admin_password: str = "admin123"
+    admin_token_secret: str = "8f3b1c9d2a7e4f6b8c1d3e5f7a9b2c4d6e8f1a3b5c7d9e2f4a6b8c0d2e4f6a8"
     session_secret: str = "session_secret"
     frontend_origin: str = "http://localhost:5173"
     langsmith_api_key: str | None = None
@@ -28,6 +29,7 @@ class Settings(BaseSettings):
     brevo_api_key: str | None = None
     brevo_from_email: str | None = None
     brevo_from_name: str | None = None
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
