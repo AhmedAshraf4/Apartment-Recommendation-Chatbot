@@ -6,6 +6,36 @@ function createSessionId() {
   return `session_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function parseSSEChunk(chunk, onEvent) {
+  const events = chunk.split("\n\n");
+
+  for (const rawEvent of events) {
+    const trimmed = rawEvent.trim();
+    if (!trimmed) continue;
+
+    const lines = trimmed.split("\n");
+    let eventName = "message";
+    let dataText = "";
+
+    for (const line of lines) {
+      if (line.startsWith("event:")) {
+        eventName = line.slice(6).trim();
+      } else if (line.startsWith("data:")) {
+        dataText += line.slice(5).trim();
+      }
+    }
+
+    if (!dataText) continue;
+
+    try {
+      const parsed = JSON.parse(dataText);
+      onEvent(eventName, parsed);
+    } catch {
+      // ignore malformed event payloads
+    }
+  }
+}
+
 export default function UserPage() {
   const sessionId = useMemo(() => createSessionId(), []);
   const messagesEndRef = useRef(null);
@@ -36,7 +66,7 @@ export default function UserPage() {
     setMessages((currentMessages) => [
       ...currentMessages,
       { role: "user", content: trimmedMessage },
-      { role: "assistant", content: "Thinking..." },
+      { role: "assistant", content: "" },
     ]);
 
     setInputValue("");
@@ -47,6 +77,7 @@ export default function UserPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Accept: "text/event-stream",
         },
         body: JSON.stringify({
           session_id: sessionId,
@@ -72,16 +103,52 @@ export default function UserPage() {
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
+      let buffer = "";
       let streamedText = "";
+      let gotAnyToken = false;
 
       while (true) {
         const { value, done } = await reader.read();
+
         if (done) {
           break;
         }
 
-        const chunk = decoder.decode(value, { stream: true });
-        streamedText += chunk;
+        buffer += decoder.decode(value, { stream: true });
+
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+
+        for (const part of parts) {
+          parseSSEChunk(part + "\n\n", (eventName, payload) => {
+            if (eventName === "token" && payload?.token) {
+              gotAnyToken = true;
+              streamedText += payload.token;
+
+              setMessages((currentMessages) => {
+                const nextMessages = [...currentMessages];
+                nextMessages[nextMessages.length - 1] = {
+                  role: "assistant",
+                  content: streamedText,
+                };
+                return nextMessages;
+              });
+            }
+
+            if (eventName === "error") {
+              throw new Error(payload?.error || "Streaming failed.");
+            }
+          });
+        }
+      }
+
+      if (buffer.trim()) {
+        parseSSEChunk(buffer, (eventName, payload) => {
+          if (eventName === "token" && payload?.token) {
+            gotAnyToken = true;
+            streamedText += payload.token;
+          }
+        });
 
         setMessages((currentMessages) => {
           const nextMessages = [...currentMessages];
@@ -93,7 +160,7 @@ export default function UserPage() {
         });
       }
 
-      if (!streamedText.trim()) {
+      if (!gotAnyToken || !streamedText.trim()) {
         setMessages((currentMessages) => {
           const nextMessages = [...currentMessages];
           nextMessages[nextMessages.length - 1] = {
