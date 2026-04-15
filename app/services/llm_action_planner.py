@@ -199,10 +199,14 @@ def plan_action_llm(user_message: str, state: dict) -> dict:
 
     Examples:
     - i want this one
+    - i want this
+    - i want it
     - i choose the second one
     - go with ap003
     - use this apartment
     - i’ll take the first one
+    - this is the one i want
+    - i want the selected one
 
     4. "analyze_shown_apartments"
     Use when the user is asking about the currently shown apartments as a group.
@@ -341,6 +345,9 @@ def plan_action_llm(user_message: str, state: dict) -> dict:
     28. If the message is ambiguous but naturally answerable from the ongoing APARTMENT conversation, prefer the correct structured route over "reply_direct".
     29. Use "fallback_chat" only when the message is still related to the apartment flow but is too ambiguous for the structured actions.
     30. Never treat "reply_direct" as a general-purpose chatbot mode.
+    31. If the user says "i want it", "i want this", "i want this one", "this is the one", or similar, and one apartment is clearly selected or in focus, choose "select_apartment".
+    32. If the user uses pronouns like "it" or "this" to choose an apartment, prefer "select_apartment" over "reply_direct".
+    33. Do not require an explicit apartment ID or ordinal when one apartment is already clearly in focus and the user is clearly expressing selection.
 
     Important examples:
 
@@ -399,6 +406,12 @@ def plan_action_llm(user_message: str, state: dict) -> dict:
     History: selected apartment is in focus
     User: "does it have a pool?"
     Output action: "get_apartment_details"
+    
+    Example L:
+    History: one apartment is clearly in focus
+    User: "i want it"
+    Output action: "select_apartment"
+    reference_type: "selected"
 
     Return exactly this JSON shape:
     {{

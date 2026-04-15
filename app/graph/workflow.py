@@ -62,6 +62,7 @@ def _safe_json(text: str):
     return None
 
 
+
 def classify_id_intent_llm(user_message: str, apartment_id: str, state: dict) -> dict:
     llm = ChatOpenAI(
         model=settings.openai_model,
@@ -238,7 +239,7 @@ def _stream_suffix(base_reply: str, suffix: str) -> str:
 def stream_interest_hint(reply: str) -> str:
     return _stream_suffix(
         reply,
-        'If this is the apartment you want, just say "I want this."',
+        'If you want this apartment, just say "I want this" or "I want it."',
     )
 
 
@@ -698,7 +699,7 @@ def search_node(state):
 
     matches = search_apartments(user_message, filters, 15)
     reply = search_reply_stream_to_writer(user_message, filters, matches)
-    if matches:
+    if len(matches) == 1:
         reply = stream_interest_hint(reply)
 
     reference_map = build_apartment_reference_map(matches)
