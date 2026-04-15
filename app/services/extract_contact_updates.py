@@ -537,6 +537,20 @@ def looks_like_bare_name(text: str) -> bool:
         "apartments", "apartment", "property", "properties",
         "pool", "garden", "view",
         "zayed", "october", "cairo",
+    "give me",
+    "show me",
+    "find me",
+    "i want",
+    "i need",
+    "tell me",
+    "what is",
+    "what's",
+    "what was",
+    "why",
+    "how",
+    "can you",
+    "could you",
+    "search",
     }
     if lowered in blocked_exact:
         return False
@@ -548,9 +562,12 @@ def looks_like_bare_name(text: str) -> bool:
         "i want",
         "i need",
         "tell me",
-        "what is",
+        "what",
         "what's",
         "search",
+        "how"
+        "where"
+        "when"
     ]
     if any(phrase in lowered for phrase in blocked_substrings):
         return False
