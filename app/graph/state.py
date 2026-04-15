@@ -31,3 +31,5 @@ class ChatState(TypedDict, total=False):
     # response
     reply: str
     stream_text: str
+
+    pending_confirmation: dict

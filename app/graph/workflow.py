@@ -1,8 +1,11 @@
 import re
-
+from langchain_openai import ChatOpenAI
+from app.core.config import settings
+import json
 from langgraph.graph import END, START, StateGraph
 from langsmith import traceable
-
+from app.services.agent_schedule_db import reserve_agent_time_slot
+from app.services.lead_prepare import format_iso_for_display
 from app.graph.state import ChatState
 from app.services.detect_action import detect_action
 from app.services.extract_contact_updates import extract_contact_updates_llm
@@ -82,6 +85,67 @@ def merge_search_filters(previous_filters: dict, new_filters: dict, user_query: 
 
     return merged
 
+def compose_lead_update_reply_llm(
+    *,
+    user_query: str,
+    hydrated_lead: dict,
+    field_updates: dict,
+    invalid_fields: list[str],
+    field_errors: dict,
+    missing_fields: list[str],
+    confirmation_resolution: str | None,
+) -> str:
+    llm = ChatOpenAI(
+        model=settings.openai_model,
+        api_key=settings.openai_api_key,
+        temperature=0.2,
+    )
+
+    safe_context = {
+        "user_query": user_query,
+        "saved_details_exist": bool(
+            hydrated_lead.get("name")
+            or hydrated_lead.get("email")
+            or hydrated_lead.get("phone")
+            or hydrated_lead.get("preferred_contact_time")
+        ),
+        "current_saved_details": {
+            "name": hydrated_lead.get("name"),
+            "email": hydrated_lead.get("email"),
+            "phone": hydrated_lead.get("phone"),
+            "preferred_contact_time": hydrated_lead.get("preferred_contact_time"),
+        },
+        "field_updates": field_updates,
+        "invalid_fields": invalid_fields,
+        "field_errors": field_errors,
+        "missing_fields": missing_fields,
+        "confirmation_resolution": confirmation_resolution,
+    }
+
+    prompt = f"""
+You are Dorra's real-estate assistant.
+
+Write one short natural reply to the user.
+
+Important rules:
+1. Be reassuring and natural.
+2. If something failed validation, clearly explain that.
+3. If the user already had saved details, reassure them those saved details are still there.
+4. Never mention internal field names like preferred_contact_time_iso.
+5. If some fields were updated successfully, mention them naturally.
+6. If details are still missing, mention what is still needed.
+7. If the email suggestion was rejected, ask the user to resend the correct email.
+8. Keep it short and conversational.
+9. Do not output JSON.
+10. Do not sound robotic.
+
+Context:
+{json.dumps(safe_context, ensure_ascii=False, indent=2)}
+""".strip()
+
+    response = llm.invoke(prompt)
+    text = response.content if hasattr(response, "content") else str(response)
+    return str(text or "").strip()
 
 def extract_direct_apartment_id(user_message: str) -> str | None:
     query = str(user_message or "").strip().lower()
@@ -157,6 +221,16 @@ def llm_followup_scope(user_message: str, state) -> str:
     return result.get("scope", "none")
 
 
+def is_yes_message(text: str) -> bool:
+    value = str(text or "").strip().lower()
+    return re.search(r"\b(yes|yeah|yep|sure|ok|okay)\b", value) is not None
+
+
+def is_no_message(text: str) -> bool:
+    value = str(text or "").strip().lower()
+    return re.search(r"\b(no|nope|nah)\b", value) is not None
+
+
 def resolve_action_apartment(state):
     action_result = state.get("action_result", {}) or {}
     reference_type = action_result.get("reference_type", "none")
@@ -168,7 +242,6 @@ def resolve_action_apartment(state):
     last_shown = state.get("last_shown_apartments", []) or []
     ref_map = state.get("apartment_reference_map", {}) or {}
 
-    # Direct apartment ID in current turn always wins
     direct_apartment_id = extract_direct_apartment_id(user_query)
     if direct_apartment_id:
         apartment = get_apartment_by_exact_id(direct_apartment_id)
@@ -176,13 +249,11 @@ def resolve_action_apartment(state):
 
     apartment_id = None
 
-    # Explicit ordinal in current turn
     for alias, mapped_id in ref_map.items():
         if alias in lowered_query:
             apartment_id = mapped_id
             break
 
-    # Structured action result / helper fallback
     if apartment_id is None:
         if reference_type == "id" and reference_value:
             apartment_id = reference_value
@@ -193,14 +264,11 @@ def resolve_action_apartment(state):
         else:
             apartment_id = resolve_apartment_reference(user_query, state)
 
-    # Current shown apartments first
     apartment = get_apartment_by_id(last_shown, apartment_id)
 
-    # Exact global lookup if action explicitly references ID
     if apartment is None and reference_type == "id" and apartment_id:
         apartment = get_apartment_by_exact_id(apartment_id)
 
-    # Fallback to selected apartment only for non-ID conversational references
     if apartment is None and reference_type != "id" and state.get("selected_apartment"):
         selected = state.get("selected_apartment")
         selected_id = selected.get("apartment_id")
@@ -573,9 +641,52 @@ def action_node(state):
     user_message = state["user_query"]
     lowered = str(user_message or "").strip().lower()
 
+    pending_confirmation = dict(state.get("pending_confirmation", {}) or {})
+    print("DEBUG action_node user_message =", repr(user_message))
+    print("DEBUG action_node pending_confirmation =", pending_confirmation)
+    print("DEBUG action_node is_yes =", is_yes_message(user_message))
+    print("DEBUG action_node is_no =", is_no_message(user_message))
+    # 0) Handle pending confirmation first
+    if pending_confirmation:
+        if is_yes_message(user_message):
+            print("DEBUG action_node entering pending_confirmation_yes branch")
+            return {
+                "action_result": {
+                    "action": "update_lead_data",
+                    "search_mode": "none",
+                    "reference_type": "none",
+                    "reference_value": None,
+                    "field_updates": {
+                        pending_confirmation.get("field"): pending_confirmation.get("suggested_value")
+                    },
+                    "invalid_fields": [],
+                    "field_errors": {},
+                    "confirmation_resolution": "accepted",
+                    "source": "pending_confirmation_yes",
+                },
+                "action": "update_lead_data",
+            }
+
+        if is_no_message(user_message):
+            print("DEBUG action_node entering pending_confirmation_no branch")
+            return {
+                "action_result": {
+                    "action": "update_lead_data",
+                    "search_mode": "none",
+                    "reference_type": "none",
+                    "reference_value": None,
+                    "field_updates": {},
+                    "invalid_fields": [],
+                    "field_errors": {},
+                    "confirmation_resolution": "rejected",
+                    "source": "pending_confirmation_no",
+                },
+                "action": "update_lead_data",
+            }
+
     direct_apartment_id = extract_direct_apartment_id(user_message)
 
-    # 0) Direct apartment ID always wins
+    # 1) Direct apartment ID always wins
     if direct_apartment_id:
         selection_phrases = [
             "i want",
@@ -613,7 +724,7 @@ def action_node(state):
             "action": "get_apartment_details",
         }
 
-    # 1) Numeric shortlist selection like "1"
+    # 2) Numeric shortlist selection like "1"
     if looks_like_numeric_option_selection(user_message, state):
         return {
             "action_result": {
@@ -627,7 +738,7 @@ def action_node(state):
             "action": "select_apartment",
         }
 
-    # 2) Explicit ordinal / shown-item selection MUST beat list analysis
+    # 3) Explicit ordinal / shown-item selection MUST beat list analysis
     if looks_like_explicit_apartment_selection(user_message, state):
         action_result = detect_action(user_message, state)
 
@@ -663,7 +774,7 @@ def action_node(state):
             "action": "select_apartment",
         }
 
-    # 3) Selected apartment conversational selection like "i want this"
+    # 4) Selected apartment conversational selection like "i want this"
     if looks_like_selected_apartment_selection(user_message, state):
         return {
             "action_result": {
@@ -677,7 +788,7 @@ def action_node(state):
             "action": "select_apartment",
         }
 
-    # 4) Submit / proceed MUST come before selected-apartment follow-up
+    # 5) Submit / proceed MUST come before selected-apartment follow-up
     if looks_like_confirmation_to_proceed(user_message, state) or is_submit_request(user_message):
         return {
             "action_result": {
@@ -691,7 +802,7 @@ def action_node(state):
             "action": "submit_lead",
         }
 
-    # 5) Selected apartment follow-up like "does it have a pool?"
+    # 6) Selected apartment follow-up like "does it have a pool?"
     if looks_like_selected_apartment_followup(user_message, state):
         return {
             "action_result": {
@@ -705,7 +816,7 @@ def action_node(state):
             "action": "get_apartment_details",
         }
 
-    # 6) LLM rescue for ambiguous short follow-ups / missed cases
+    # 7) LLM rescue for ambiguous short follow-ups / missed cases
     scope = llm_followup_scope(user_message, state)
 
     if scope == "shown_list":
@@ -747,7 +858,7 @@ def action_node(state):
             "action": "search",
         }
 
-    # 7) Shown-list follow-up only after explicit selection checks
+    # 8) Shown-list follow-up only after explicit selection checks
     if looks_like_shown_list_followup(user_message, state):
         return {
             "action_result": {
@@ -761,7 +872,7 @@ def action_node(state):
             "action": "analyze_shown_apartments",
         }
 
-    # 8) Explicit new search
+    # 9) Explicit new search
     if looks_like_explicit_search_request(user_message, state):
         return {
             "action_result": {
@@ -775,27 +886,33 @@ def action_node(state):
             "action": "search",
         }
 
-    # 9) Main LLM planner
+    # 10) Main LLM planner
     action_result = detect_action(user_message, state)
     action = action_result.get("action", "unsupported")
 
-    # 10) Contact extraction only after main routing
+    # 11) Contact extraction only after main routing
     if action in {"unsupported", "update_lead_data", "submit_lead"}:
-        llm_contact_updates = extract_contact_updates_llm(user_message, state)
-        if llm_contact_updates:
+        contact_result = extract_contact_updates_llm(user_message, state)
+        if (
+            contact_result.get("valid_updates")
+            or contact_result.get("invalid_fields")
+            or contact_result.get("field_errors")
+        ):
             return {
                 "action_result": {
                     "action": "update_lead_data",
                     "search_mode": "none",
                     "reference_type": "none",
                     "reference_value": None,
-                    "field_updates": llm_contact_updates,
+                    "field_updates": contact_result.get("valid_updates", {}),
+                    "invalid_fields": contact_result.get("invalid_fields", []),
+                    "field_errors": contact_result.get("field_errors", {}),
                     "source": "llm_contact_update",
                 },
                 "action": "update_lead_data",
             }
 
-    # 11) Final fallback chat
+    # 12) Final fallback chat
     if action == "unsupported":
         action = "fallback_chat"
         action_result["action"] = "fallback_chat"
@@ -958,50 +1075,86 @@ def apartment_selected_node(state):
 def update_lead_data_node(state):
     action_result = state.get("action_result", {}) or {}
     field_updates = dict(action_result.get("field_updates", {}) or {})
+    invalid_fields = list(action_result.get("invalid_fields", []) or [])
+    field_errors = dict(action_result.get("field_errors", {}) or {})
+    confirmation_resolution = action_result.get("confirmation_resolution")
 
-    if not field_updates:
-        field_updates = extract_contact_updates_llm(state.get("user_query", ""), state)
+    current_pending = dict(state.get("pending_confirmation", {}) or {})
+    raw_user_message = str(state.get("user_query", "")).strip().lower()
+
+    if current_pending and not confirmation_resolution:
+        if is_yes_message(raw_user_message):
+            field_updates = {
+                current_pending.get("field"): current_pending.get("suggested_value")
+            }
+            confirmation_resolution = "accepted"
+        elif is_no_message(raw_user_message):
+            confirmation_resolution = "rejected"
+
+    if not field_updates and not invalid_fields and not confirmation_resolution and not current_pending:
+        contact_result = extract_contact_updates_llm(state.get("user_query", ""), state)
+        field_updates = dict(contact_result.get("valid_updates", {}) or {})
+        invalid_fields = list(contact_result.get("invalid_fields", []) or [])
+        field_errors = dict(contact_result.get("field_errors", {}) or {})
 
     current_lead = dict(state.get("lead_data", {}) or {})
     user_profile = dict(state.get("user_profile", {}) or {})
 
-    # Build a hydrated lead from remembered profile first
     hydrated_lead = {
         "name": current_lead.get("name") or user_profile.get("name"),
         "email": current_lead.get("email") or user_profile.get("email"),
         "phone": current_lead.get("phone") or user_profile.get("phone"),
         "preferred_contact_time": current_lead.get("preferred_contact_time") or user_profile.get("preferred_contact_time"),
+        "preferred_contact_time_iso": current_lead.get("preferred_contact_time_iso") or user_profile.get("preferred_contact_time_iso"),
         "apartment_id": current_lead.get("apartment_id") or state.get("selected_apartment_id") or user_profile.get("apartment_id"),
     }
 
-    # Apply new updates on top
     merged_lead = {**hydrated_lead, **field_updates}
     updated_profile = {**user_profile, **field_updates}
-
-    changed_fields = ", ".join(field_updates.keys()) if field_updates else "details"
     missing_fields = get_missing_fields(merged_lead)
 
-    if field_updates:
-        if missing_fields:
-            reply = (
-                f"I updated your {changed_fields}. "
-                f"I still need: {', '.join(missing_fields)}."
-            )
+    pending_confirmation = {}
+
+    # keep email typo confirmation state in code
+    if "email" in invalid_fields:
+        email_error = field_errors.get("email", {}) or {}
+        suggestion = email_error.get("suggestion")
+        if suggestion:
+            pending_confirmation = {
+                "field": "email",
+                "original_value": state.get("user_query", "").strip(),
+                "suggested_value": suggestion,
+                "type": "email_suggestion",
+            }
+
+    reply = compose_lead_update_reply_llm(
+        user_query=state.get("user_query", ""),
+        hydrated_lead=hydrated_lead,
+        field_updates=field_updates,
+        invalid_fields=invalid_fields,
+        field_errors=field_errors,
+        missing_fields=missing_fields,
+        confirmation_resolution=confirmation_resolution,
+    )
+
+    if not reply:
+        # tiny safety fallback only
+        if field_updates:
+            reply = "I updated your details."
+            if missing_fields:
+                reply += f" I still need: {', '.join(missing_fields)}."
+            else:
+                reply += " Your details look complete now. Tell me to proceed when you’re ready."
+        elif invalid_fields:
+            reply = "Your saved details are still there. I just could not apply that update. Please resend it more clearly."
         else:
-            reply = (
-                f"I updated your {changed_fields}. "
-                f"Your details look complete now. Tell me to proceed when you’re ready."
-            )
-    else:
-        reply = (
-            "I still could not detect any new contact details. "
-            "Please send your name, email, phone number, or preferred contact time."
-        )
+            reply = "Your saved details are still there. Please resend the field you want to update more clearly."
 
     return {
         "lead_data": merged_lead,
         "user_profile": updated_profile,
         "missing_fields": missing_fields,
+        "pending_confirmation": pending_confirmation if confirmation_resolution != "accepted" else {},
         "reply": reply,
         "stream_text": reply,
     }
@@ -1016,6 +1169,7 @@ def submit_lead_prep_node(state):
         "email": lead_data.get("email") or user_profile.get("email"),
         "phone": lead_data.get("phone") or user_profile.get("phone"),
         "preferred_contact_time": lead_data.get("preferred_contact_time") or user_profile.get("preferred_contact_time"),
+        "preferred_contact_time_iso": lead_data.get("preferred_contact_time_iso") or user_profile.get("preferred_contact_time_iso"),
         "apartment_id": lead_data.get("apartment_id") or state.get("selected_apartment_id"),
     }
 
@@ -1065,6 +1219,44 @@ def send_lead_node(state):
             "stream_text": reply,
         }
 
+    agent_email = str(selected_apartment.get("agent_email") or "").strip().lower()
+    requested_contact_at_iso = str(lead_data.get("preferred_contact_time_iso") or "").strip()
+
+    if not requested_contact_at_iso:
+        reply = "I need a valid contact time before I can submit your request."
+        return {
+            "reply": reply,
+            "stream_text": reply,
+        }
+
+    reservation = reserve_agent_time_slot(
+        agent_email=agent_email,
+        requested_contact_at_iso=requested_contact_at_iso,
+    )
+
+    if not reservation.get("success"):
+        conflict = reservation.get("conflict") or {}
+        busy_from_iso = conflict.get("busy_from")
+        busy_to_iso = conflict.get("busy_to")
+
+        if busy_from_iso and busy_to_iso:
+            reply = (
+                "The agent responsible for this apartment is busy in that time window. "
+                f"The blocked period is from {format_iso_for_display(busy_from_iso)} "
+                f"to {format_iso_for_display(busy_to_iso)}. "
+                "Please choose another contact time."
+            )
+        else:
+            reply = (
+                "The agent responsible for this apartment is busy at that time. "
+                "Please choose another contact time."
+            )
+
+        return {
+            "reply": reply,
+            "stream_text": reply,
+        }
+
     result = send_email(selected_apartment, lead_data)
 
     if result.get("success"):
@@ -1076,8 +1268,8 @@ def send_lead_node(state):
                 "name": lead_data.get("name") or remembered_profile.get("name"),
                 "email": lead_data.get("email") or remembered_profile.get("email"),
                 "phone": lead_data.get("phone") or remembered_profile.get("phone"),
-                "preferred_contact_time": lead_data.get("preferred_contact_time") or remembered_profile.get(
-                    "preferred_contact_time"),
+                "preferred_contact_time": lead_data.get("preferred_contact_time") or remembered_profile.get("preferred_contact_time"),
+                "preferred_contact_time_iso": lead_data.get("preferred_contact_time_iso") or remembered_profile.get("preferred_contact_time_iso"),
             }
         )
 
@@ -1087,7 +1279,14 @@ def send_lead_node(state):
             "lead_data": {},
             "missing_fields": [],
             "user_profile": remembered_profile,
+            "pending_confirmation": {},
         }
+
+    reply = result.get("message", "Failed to send email.")
+    return {
+        "reply": reply,
+        "stream_text": reply,
+    }
 
 
 def general_chat_node(state):

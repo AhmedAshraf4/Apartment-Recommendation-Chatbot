@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     brevo_api_key: str | None = None
     brevo_from_email: str | None = None
     brevo_from_name: str | None = None
+    postgres_dsn: str
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

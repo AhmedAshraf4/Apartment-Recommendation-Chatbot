@@ -13,4 +13,6 @@ langsmith
 itsdangerous
 pydantic-settings
 brevo-python
-
+email-validator
+phonenumbers
+psycopg[binary]
