@@ -16,7 +16,7 @@ CAIRO_TZ = ZoneInfo("Africa/Cairo")
 
 WORKING_DAYS = {6, 0, 1, 2, 3}  # Sunday to Thursday
 WORK_START = time(9, 0)
-WORK_END = time(16, 45)
+WORK_END = time(17, 00)
 
 COMMON_EMAIL_DOMAINS = [
     "gmail.com",
