@@ -369,6 +369,39 @@ def plan_action_llm(user_message: str, state: dict) -> dict:
     36. Do not keep the old selected apartment when the latest message clearly selects a different apartment by ID.
     37. If the user asks to delete a booking, cancel a booking, remove a booking, or view busy times / unavailable times, do not choose "submit_lead" or "update_lead_data". Choose "reply_direct" or "fallback_chat" and respond that they cannot delete bookings or view busy times here, but they can modify their booking to another time.
     38. If the user asks a short attribute-only question about the currently shown apartments, such as "3 bedrooms?", "2 bathrooms?", or "garden view?", interpret it as: "which of the currently shown apartments match this?"
+    39. Greetings, filler, confusion, objections, and conversational questions are NOT "update_lead_data" unless the latest message clearly contains an actual contact value.
+    This includes messages like:
+    - "hi"
+    - "hello"
+    - "hiiii"
+    - "hey"
+    - "what was that"
+    - "why"
+    - "what do you mean"
+    - "okay"
+    - "ok"
+    - "can you explain"
+    - "i do not understand"
+    - "what do you need from me"
+    - "no i meant something else"
+    
+    40. Only choose "update_lead_data" when the latest user message clearly provides or changes at least one of:
+        - name
+        - email
+        - phone
+        - preferred contact time
+    
+    41. If the message is just a greeting, reaction, question, or conversational glue with no real contact value, prefer "reply_direct" instead of "update_lead_data".
+    
+    42. Do not interpret greetings, stretched greetings, or conversational questions as names.
+        Examples that are NOT names:
+        - "hi"
+        - "hiiii"
+        - "hiiiiiiii"
+        - "hello"
+        - "what was that"
+        - "why"
+    
     
     Important examples:
 

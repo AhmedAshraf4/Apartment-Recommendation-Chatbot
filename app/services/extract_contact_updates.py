@@ -565,9 +565,10 @@ def looks_like_bare_name(text: str) -> bool:
         "what",
         "what's",
         "search",
-        "how"
-        "where"
-        "when"
+        "how",
+        "where",
+        "when",
+        "hiii",
     ]
     if any(phrase in lowered for phrase in blocked_substrings):
         return False
@@ -611,36 +612,74 @@ def extract_contact_updates_llm(user_message: str, state: dict) -> dict:
     safe_context = build_safe_contact_context(state)
 
     prompt = f"""
-You are a strict extraction engine for contact updates in a real-estate assistant.
+    You are a strict extraction engine for contact updates in a real-estate assistant.
 
-Return JSON only.
-Do not return markdown.
-Do not explain anything.
+    Return JSON only.
+    Do not return markdown.
+    Do not explain anything.
 
-Allowed keys only:
-- "name"
-- "email"
-- "phone"
-- "preferred_contact_time"
+    Allowed keys only:
+    - "name"
+    - "email"
+    - "phone"
+    - "preferred_contact_time"
 
-Rules:
-1. Extract only fields explicitly stated or clearly implied.
-2. If the user sends only a bare name like "Ahmed" or "Ahmed Ashraf", extract it as "name".
-3. If the user sends only an email, extract only "email".
-4. If the user sends only a phone number, extract only "phone".
-5. If the user sends a time phrase naturally, extract it as "preferred_contact_time".
-6. Time may be phrased in many natural ways.
-7. If the user says "change my email to ..." or "use this number instead", extract only the changed fields.
-8. Do not invent values.
-9. If no contact field is present, return an empty JSON object {{}}.
-10. If the user message is mainly a time adjustment relative to the previously saved preferred contact time, still extract it as "preferred_contact_time".
+    Core rule:
+    Only extract a field when the latest message itself clearly contains a real contact value.
+    If the message is a greeting, reaction, confusion, question, objection, proceed-like confirmation, or general conversational text, return an empty JSON object {{}}.
 
-Safe context:
-{json.dumps(safe_context, ensure_ascii=False, indent=2)}
+    Rules:
+    1. Extract only fields explicitly stated or unambiguously provided in the latest message.
+    2. A bare name should be extracted as "name" only if it looks like a real human name.
+    3. Do NOT extract "name" from greetings, stretched greetings, filler, reactions, or conversational phrases.
+    4. Do NOT extract anything from questions or clarification messages.
+    5. Do NOT extract anything from proceed/confirmation messages.
+    6. Do NOT invent values.
+    7. If no real contact field is present, return {{}}.
+    8. If the user sends only an email, extract only "email".
+    9. If the user sends only a phone number, extract only "phone".
+    10. If the user sends a real time phrase naturally, extract only "preferred_contact_time".
+    11. If the user says "change my email to ..." or "use this number instead", extract only the changed fields.
+    12. If the user message is mainly a time adjustment relative to the previously saved preferred contact time, still extract it as "preferred_contact_time".
+    13. Greetings, filler, confusion, acknowledgments, and conversational questions are NOT contact updates. Return {{}} for messages like:
+        - "hi"
+        - "hiiii"
+        - "hiiiiiiii"
+        - "hello"
+        - "hey"
+        - "what was that"
+        - "why"
+        - "what do you mean"
+        - "can you explain"
+        - "ok"
+        - "okay"
+        - "sure"
+        - "thanks"
+    14. Proceed-like messages are NOT contact updates. Return {{}} for messages like:
+        - "proceed"
+        - "proceeed"
+        - "continue"
+        - "go ahead"
+        - "submit"
+        - "send it"
+    15. Bare names should usually look like a real person name, for example:
+        - "alaa"
+        - "Ahmed Ashraf"
+        - "Sara Mohamed"
+    16. These are NOT names and must return {{}}:
+        - "what was that"
+        - "hiiiiiiii"
+        - "apartment in zayed"
+        - "pool view"
+        - "first one"
+        - "proceed"
 
-User message:
-{user_message}
-""".strip()
+    Safe context:
+    {json.dumps(safe_context, ensure_ascii=False, indent=2)}
+
+    User message:
+    {user_message}
+    """.strip()
 
     response = llm.invoke(prompt)
     raw = response.content if hasattr(response, "content") else str(response)
