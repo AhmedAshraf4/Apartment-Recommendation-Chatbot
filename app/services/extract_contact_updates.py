@@ -1,6 +1,6 @@
 import json
 import re
-from datetime import datetime, time, timedelta
+from datetime import datetime, time
 from difflib import get_close_matches
 from zoneinfo import ZoneInfo
 
@@ -16,7 +16,7 @@ CAIRO_TZ = ZoneInfo("Africa/Cairo")
 
 WORKING_DAYS = {6, 0, 1, 2, 3}  # Sunday to Thursday
 WORK_START = time(9, 0)
-WORK_END = time(17, 0)
+WORK_END = time(16, 45)
 
 COMMON_EMAIL_DOMAINS = [
     "gmail.com",
@@ -32,14 +32,6 @@ COMMON_EMAIL_DOMAINS = [
     "me.com",
     "ymail.com",
 ]
-
-PRAYER_APPROX_TIMES = {
-    "fajr": (5, 0),
-    "dhuhr": (12, 30),
-    "asr": (15, 30),
-    "maghrib": (18, 0),
-    "isha": (19, 30),
-}
 
 
 def parse_json(text):
@@ -120,69 +112,6 @@ def validate_and_normalize_email(email: str) -> dict:
         "suggestion": None,
     }
 
-def extract_explicit_time_phrase(user_message: str) -> str | None:
-    text = str(user_message or "").strip()
-    if not text:
-        return None
-
-    patterns = [
-        r"^\s*(?:update|change|modify|set)\s+(?:the\s+)?(?:preferred\s+contact\s+time|contact\s+time|time)\s+(?:to\s+)?(.+?)\s*$",
-        r"^\s*(?:preferred\s+contact\s+time|contact\s+time|time)\s+(?:is\s+|to\s+)?(.+?)\s*$",
-    ]
-
-    for pattern in patterns:
-        match = re.match(pattern, text, re.IGNORECASE)
-        if match:
-            candidate = str(match.group(1) or "").strip(" .,:;")
-            if candidate:
-                return candidate
-
-    return None
-
-
-def looks_like_time_phrase(text: str) -> bool:
-    value = str(text or "").strip().lower()
-    if not value:
-        return False
-
-    hints = [
-        "am", "pm", "noon", "morning", "afternoon", "evening",
-        "today", "tomorrow",
-        "after ", "next ",
-        "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
-        "asr", "isha", "dhuhr", "maghrib", "fajr",
-    ]
-
-    if any(hint in value for hint in hints):
-        return True
-
-    return re.search(r"\b\d{1,2}(:\d{2})?\b", value) is not None
-
-def fallback_extract_contact_updates(user_message: str) -> dict:
-    text = str(user_message or "").strip()
-    updates = {}
-
-    email_match = re.search(r"([^\s,;]+@[^\s,;]+)", text)
-    if email_match:
-        updates["email"] = email_match.group(1).strip()
-
-    phone_match = re.search(r"(\+?\d[\d\s\-()]{6,}\d)", text)
-    if phone_match:
-        updates["phone"] = phone_match.group(1).strip()
-
-    explicit_time = extract_explicit_time_phrase(text)
-    if explicit_time:
-        updates["preferred_contact_time"] = explicit_time
-        return updates
-
-    if looks_like_time_phrase(text) and not updates:
-        updates["preferred_contact_time"] = text
-        return updates
-
-    if not updates and looks_like_bare_name(text):
-        updates["name"] = text
-
-    return updates
 
 def validate_and_normalize_phone(phone: str, default_region: str = DEFAULT_PHONE_REGION) -> str | None:
     raw = str(phone or "").strip()
@@ -203,7 +132,21 @@ def validate_and_normalize_phone(phone: str, default_region: str = DEFAULT_PHONE
     return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
 
 
-def get_now_cairo() -> datetime:
+def get_reference_now_cairo(state: dict | None = None) -> datetime:
+    if state:
+        for key in ["message_received_at_iso", "conversation_started_at_iso"]:
+            iso_value = str(state.get(key) or "").strip()
+            if iso_value:
+                try:
+                    dt = datetime.fromisoformat(iso_value)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=CAIRO_TZ)
+                    else:
+                        dt = dt.astimezone(CAIRO_TZ)
+                    return dt
+                except Exception:
+                    pass
+
     return datetime.now(CAIRO_TZ)
 
 
@@ -216,28 +159,28 @@ def is_within_working_hours(dt: datetime) -> bool:
     return WORK_START <= current_t <= WORK_END
 
 
-def validate_contact_datetime(dt: datetime) -> dict:
-    now = get_now_cairo()
+def validate_contact_datetime(dt: datetime, state: dict | None = None) -> dict:
+    now = get_reference_now_cairo(state)
 
     if dt <= now:
         return {
             "is_valid": False,
             "reason": "past_time",
-            "message": "This contact time has already passed. Please choose a future time from Sunday to Thursday, between 9 AM and 5 PM.",
+            "message": "That time has already passed. Please choose a future time from Sunday to Thursday, between 9 AM and 5 PM.",
         }
 
     if not is_working_day(dt):
         return {
             "is_valid": False,
             "reason": "outside_working_days",
-            "message": "This day is outside working days. Please choose a time from Sunday to Thursday, between 9 AM and 5 PM.",
+            "message": "Please choose a day from Sunday to Thursday.",
         }
 
     if not is_within_working_hours(dt):
         return {
             "is_valid": False,
             "reason": "outside_working_hours",
-            "message": "This time is outside working hours. Please choose a time between 9 AM and 5 PM.",
+            "message": "Please choose a time between 9 AM and 5 PM.",
         }
 
     return {
@@ -247,24 +190,49 @@ def validate_contact_datetime(dt: datetime) -> dict:
     }
 
 
-def apply_prayer_phrase(prayer_name: str, now: datetime, day_offset: int = 0, plus_minutes: int = 0) -> datetime | None:
-    prayer_name = str(prayer_name or "").strip().lower()
-    prayer_time = PRAYER_APPROX_TIMES.get(prayer_name)
-    if not prayer_time:
+def _safe_iso_to_cairo(iso_value: str | None) -> str | None:
+    value = str(iso_value or "").strip()
+    if not value:
         return None
 
-    hour, minute = prayer_time
-    dt = (now + timedelta(days=day_offset)).replace(
-        hour=hour,
-        minute=minute,
-        second=0,
-        microsecond=0,
-    )
-    dt += timedelta(minutes=plus_minutes)
-    return dt
+    try:
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=CAIRO_TZ)
+        else:
+            dt = dt.astimezone(CAIRO_TZ)
+        return dt.isoformat()
+    except Exception:
+        return None
 
 
-def llm_parse_contact_time(text: str) -> dict:
+def build_time_parsing_context(state: dict | None = None) -> dict:
+    state = state or {}
+
+    lead_data = state.get("lead_data") or {}
+    user_profile = state.get("user_profile") or {}
+
+    lead_time_text = str(lead_data.get("preferred_contact_time") or "").strip() or None
+    lead_time_iso = _safe_iso_to_cairo(lead_data.get("preferred_contact_time_iso"))
+
+    profile_time_text = str(user_profile.get("preferred_contact_time") or "").strip() or None
+    profile_time_iso = _safe_iso_to_cairo(user_profile.get("preferred_contact_time_iso"))
+
+    latest_anchor_iso = lead_time_iso or profile_time_iso
+
+    return {
+        "current_cairo_datetime_iso": get_reference_now_cairo(state).isoformat(),
+        "saved_time_state": {
+            "lead_preferred_contact_time_text": lead_time_text,
+            "lead_preferred_contact_time_iso": lead_time_iso,
+            "user_profile_preferred_contact_time_text": profile_time_text,
+            "user_profile_preferred_contact_time_iso": profile_time_iso,
+            "latest_anchor_time_iso": latest_anchor_iso,
+        },
+    }
+
+
+def llm_parse_contact_time(text: str, state: dict | None = None) -> dict:
     raw = str(text or "").strip()
     if not raw:
         return {
@@ -274,7 +242,8 @@ def llm_parse_contact_time(text: str) -> dict:
             "reason": "empty",
         }
 
-    now = get_now_cairo()
+    time_context = build_time_parsing_context(state)
+    now_iso = time_context["current_cairo_datetime_iso"]
 
     llm = ChatOpenAI(
         model=settings.openai_model,
@@ -283,48 +252,83 @@ def llm_parse_contact_time(text: str) -> dict:
     )
 
     prompt = f"""
-    You are a strict parser for preferred contact times.
+You are a strict parser for preferred contact times for a real-estate assistant.
 
-    Current Cairo datetime:
-    {now.isoformat()}
+Return JSON only.
+Do not explain anything.
+Do not output markdown.
 
-    Return JSON only.
-    Do not explain anything.
+Your task:
+Convert the user's latest time phrase into exactly one absolute datetime in Africa/Cairo timezone.
 
-    Convert the user's phrase into one exact Cairo datetime.
-    The output must be a REAL calendar datetime, not a relative phrase.
+Current Cairo datetime:
+{now_iso}
 
-    Rules:
-    1. Resolve phrases like:
-       - 7 pm
-       - today 3 pm
-       - tomorrow 11 am
-       - sunday at 10
-       - next thursday at 4 pm
-       - at noon
-       - tomorrow at noon
-       - after 1 hour
-       - after 2 hours
-       - after asr
-       - after isha
-       - tomorrow after asr
-       - tomorrow morning
-    2. If the user gives a bare time like "9 am" or "4 pm" without saying "tomorrow" or a day name, interpret it as TODAY at that time.
-    3. Do not automatically move a past bare time to tomorrow.
-    4. Return exactly one datetime candidate if understandable.
-    5. If the phrase is too vague, return {{"status":"unclear"}}.
-    6. If the phrase cannot be understood, return {{"status":"unparsed"}}.
-    7. Use Africa/Cairo timezone.
-    8. The output must be absolute ISO datetime.
+Saved time state:
+{json.dumps(time_context["saved_time_state"], ensure_ascii=False, indent=2)}
 
-    Return exactly one of:
-    {{"status":"parsed","iso":"2026-04-15T12:00:00+02:00"}}
-    {{"status":"unclear"}}
-    {{"status":"unparsed"}}
+Critical goal:
+Be extremely accurate with weekday resolution.
+If the user says "monday", "next monday", "after next monday", "this sunday", or similar,
+you must resolve the actual calendar day correctly from the current Cairo datetime.
 
-    User phrase:
-    {raw}
-    """.strip()
+You must understand natural language time references such as:
+- tomorrow at 10 am
+- tommorow at 10 am
+- in 1 hour
+- in 1 hr
+- in 2 hrs
+- in two hours
+- after 1 hour
+- after asr
+- after isha
+- tomorrow after asr
+- today at noon
+- sunday 10 am
+- monday at 12 pm
+- next thursday at 4 pm
+- after next monday at 1 pm
+- monday morning
+- tomorrow morning
+- 7 pm
+- 10 am works
+- around 3 pm
+- make it 2 pm instead
+- another hour
+- one hour later
+- same day at 3 pm
+- same time but next monday
+
+Meaning rules:
+1. Resolve everything from the CURRENT Cairo datetime shown above.
+2. If the user gives an explicit weekday, resolve the NEXT matching future occurrence unless they clearly mean otherwise.
+3. "next monday" means the monday of the next week, not today and not the nearest ambiguous interpretation.
+4. "after next monday" means one week after next monday.
+5. If the user gives a bare time like "10 am" with no day, interpret it as TODAY at that time.
+6. Do not silently move a past bare time to tomorrow.
+7. If the user says "another hour", "one hour later", "same day", "same time", "instead", "keep the same day", or similar, use the saved_time_state latest_anchor_time_iso as the anchor if available.
+8. When using the anchor:
+   - "another hour" = anchor + 1 hour
+   - "same day at 3 pm" = same calendar date as anchor, new time 3 pm
+   - "same time but next monday" = keep anchor time, change date to next monday
+9. If the phrase depends on a prior saved time but there is no usable anchor in saved_time_state, return {{"status":"unclear"}}.
+10. If the phrase is understandable but still too vague to choose one exact datetime, return {{"status":"unclear"}}.
+11. If the phrase cannot be understood, return {{"status":"unparsed"}}.
+12. Output exactly one absolute ISO datetime when parsed successfully.
+13. The datetime must remain in Africa/Cairo timezone.
+14. Pay special attention not to confuse weekday names. For example, if current date is Wednesday 2026-04-15, then:
+    - monday at 12 pm -> 2026-04-20T12:00:00+02:00
+    - sunday at 12 pm -> 2026-04-19T12:00:00+02:00
+    - next monday at 12 pm -> 2026-04-20T12:00:00+02:00
+
+Return exactly one of these forms:
+{{"status":"parsed","iso":"2026-04-20T12:00:00+02:00"}}
+{{"status":"unclear"}}
+{{"status":"unparsed"}}
+
+User phrase:
+{raw}
+""".strip()
 
     response = llm.invoke(prompt)
     raw_response = response.content if hasattr(response, "content") else str(response)
@@ -387,115 +391,11 @@ def llm_parse_contact_time(text: str) -> dict:
     }
 
 
-def heuristic_parse_contact_time(text: str) -> dict:
-    raw = str(text or "").strip()
-    if not raw:
-        return {
-            "is_parsed": False,
-            "dt": None,
-            "normalized": None,
-            "reason": "empty",
-        }
-
-    now = get_now_cairo()
-    lowered = raw.lower().strip()
-
-    # after X hour(s) -> true future relative time
-    rel_match = re.search(r"after\s+(\d+)\s+hour", lowered)
-    if rel_match:
-        hours = int(rel_match.group(1))
-        dt = now + timedelta(hours=hours)
-        dt = dt.replace(second=0, microsecond=0)
-        return {
-            "is_parsed": True,
-            "dt": dt,
-            "normalized": dt.isoformat(),
-            "reason": None,
-        }
-
-    # prayer-relative phrases
-    if "after asr" in lowered:
-        day_offset = 1 if "tomorrow" in lowered else 0
-        dt = apply_prayer_phrase("asr", now, day_offset=day_offset, plus_minutes=30)
-        if dt:
-            return {
-                "is_parsed": True,
-                "dt": dt,
-                "normalized": dt.isoformat(),
-                "reason": None,
-            }
-
-    if "after isha" in lowered:
-        day_offset = 1 if "tomorrow" in lowered else 0
-        dt = apply_prayer_phrase("isha", now, day_offset=day_offset, plus_minutes=30)
-        if dt:
-            return {
-                "is_parsed": True,
-                "dt": dt,
-                "normalized": dt.isoformat(),
-                "reason": None,
-            }
-
-    if "tomorrow morning" in lowered:
-        dt = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
-        return {
-            "is_parsed": True,
-            "dt": dt,
-            "normalized": dt.isoformat(),
-            "reason": None,
-        }
-
-    # noon handling
-    if "noon" in lowered:
-        day_offset = 1 if "tomorrow" in lowered else 0
-        dt = (now + timedelta(days=day_offset)).replace(hour=12, minute=0, second=0, microsecond=0)
-        return {
-            "is_parsed": True,
-            "dt": dt,
-            "normalized": dt.isoformat(),
-            "reason": None,
-        }
-
-    # explicit clock time like 9 am / 9:00 am / 4 pm
-    clock_match = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", lowered)
-    if clock_match:
-        hour = int(clock_match.group(1))
-        minute = int(clock_match.group(2) or 0)
-        meridiem = clock_match.group(3)
-
-        if 1 <= hour <= 12 and 0 <= minute <= 59:
-            if meridiem == "am":
-                if hour == 12:
-                    hour = 0
-            else:
-                if hour != 12:
-                    hour += 12
-
-            # IMPORTANT:
-            # bare time means TODAY unless the user explicitly says tomorrow
-            day_offset = 1 if "tomorrow" in lowered else 0
-            dt = (now + timedelta(days=day_offset)).replace(
-                hour=hour,
-                minute=minute,
-                second=0,
-                microsecond=0,
-            )
-
-            return {
-                "is_parsed": True,
-                "dt": dt,
-                "normalized": dt.isoformat(),
-                "reason": None,
-            }
-
-    return llm_parse_contact_time(raw)
+def parse_preferred_contact_time(text: str, state: dict | None = None) -> dict:
+    return llm_parse_contact_time(text, state)
 
 
-def parse_preferred_contact_time(text: str) -> dict:
-    return heuristic_parse_contact_time(text)
-
-
-def normalize_contact_result(data):
+def normalize_contact_result(data, state: dict | None = None):
     if not isinstance(data, dict):
         return {
             "valid_updates": {},
@@ -541,7 +441,7 @@ def normalize_contact_result(data):
     if isinstance(preferred_contact_time, str):
         preferred_contact_time = preferred_contact_time.strip()
         if preferred_contact_time:
-            parsed_time = parse_preferred_contact_time(preferred_contact_time)
+            parsed_time = parse_preferred_contact_time(preferred_contact_time, state)
 
             if not parsed_time["is_parsed"]:
                 invalid_fields.append("preferred_contact_time")
@@ -551,8 +451,8 @@ def normalize_contact_result(data):
                         "reason": "unclear_time",
                         "suggestion": None,
                         "message": (
-                            "Your saved details are still there. I only need a clearer contact time. "
-                            "For example: tomorrow 11 am, Sunday 10 am, at noon, or after 1 hour."
+                            "Please send the contact time more clearly, for example: "
+                            "tomorrow 11 am, Sunday 10 am, next Monday 1 pm, same day at 3 pm, or after 1 hour."
                         ),
                     }
                 else:
@@ -560,12 +460,12 @@ def normalize_contact_result(data):
                         "reason": "unrecognized_time",
                         "suggestion": None,
                         "message": (
-                            "Your saved details are still there. I just could not understand the new contact time. "
-                            "Please send it more clearly, for example: tomorrow 11 am, Sunday 10 am, at noon, or after 1 hour."
+                            "I could not understand that contact time. Please send it more clearly, for example: "
+                            "tomorrow 11 am, Sunday 10 am, next Monday 1 pm, same day at 3 pm, or after 1 hour."
                         ),
                     }
             else:
-                validation = validate_contact_datetime(parsed_time["dt"])
+                validation = validate_contact_datetime(parsed_time["dt"], state)
                 if validation["is_valid"]:
                     valid_updates["preferred_contact_time"] = preferred_contact_time
                     valid_updates["preferred_contact_time_iso"] = parsed_time["normalized"]
@@ -585,24 +485,31 @@ def normalize_contact_result(data):
 
 
 def build_safe_contact_context(state):
+    state = state or {}
+
+    lead_data = state.get("lead_data") or {}
+    user_profile = state.get("user_profile") or {}
+
     return {
         "selected_apartment_id": state.get("selected_apartment_id"),
+        "message_received_at_iso": state.get("message_received_at_iso"),
+        "conversation_started_at_iso": state.get("conversation_started_at_iso"),
         "current_lead_data": {
-            "name": (state.get("lead_data") or {}).get("name"),
-            "email": (state.get("lead_data") or {}).get("email"),
-            "phone": (state.get("lead_data") or {}).get("phone"),
-            "preferred_contact_time": (state.get("lead_data") or {}).get("preferred_contact_time"),
-            "preferred_contact_time_iso": (state.get("lead_data") or {}).get("preferred_contact_time_iso"),
-            "apartment_id": (state.get("lead_data") or {}).get("apartment_id"),
+            "name": lead_data.get("name"),
+            "email": lead_data.get("email"),
+            "phone": lead_data.get("phone"),
+            "preferred_contact_time": lead_data.get("preferred_contact_time"),
+            "preferred_contact_time_iso": lead_data.get("preferred_contact_time_iso"),
+            "apartment_id": lead_data.get("apartment_id"),
         },
         "user_profile": {
-            "name": (state.get("user_profile") or {}).get("name"),
-            "email": (state.get("user_profile") or {}).get("email"),
-            "phone": (state.get("user_profile") or {}).get("phone"),
-            "preferred_contact_time": (state.get("user_profile") or {}).get("preferred_contact_time"),
-            "preferred_contact_time_iso": (state.get("user_profile") or {}).get("preferred_contact_time_iso"),
+            "name": user_profile.get("name"),
+            "email": user_profile.get("email"),
+            "phone": user_profile.get("phone"),
+            "preferred_contact_time": user_profile.get("preferred_contact_time"),
+            "preferred_contact_time_iso": user_profile.get("preferred_contact_time_iso"),
         },
-        "recent_history": (state.get("chat_history") or [])[-6:],
+        "time_parsing_context": build_time_parsing_context(state),
     }
 
 
@@ -659,6 +566,24 @@ def looks_like_bare_name(text: str) -> bool:
     return False
 
 
+def fallback_extract_contact_updates(user_message: str) -> dict:
+    text = str(user_message or "").strip()
+    updates = {}
+
+    email_match = re.search(r"([^\s,;]+@[^\s,;]+)", text)
+    if email_match:
+        updates["email"] = email_match.group(1).strip()
+
+    phone_match = re.search(r"(\+?\d[\d\s\-()]{6,}\d)", text)
+    if phone_match:
+        updates["phone"] = phone_match.group(1).strip()
+
+    if not updates and looks_like_bare_name(text):
+        updates["name"] = text
+
+    return updates
+
+
 def extract_contact_updates_llm(user_message: str, state: dict) -> dict:
     llm = ChatOpenAI(
         model=settings.openai_model,
@@ -686,10 +611,12 @@ Rules:
 2. If the user sends only a bare name like "Ahmed" or "Ahmed Ashraf", extract it as "name".
 3. If the user sends only an email, extract only "email".
 4. If the user sends only a phone number, extract only "phone".
-5. If the user says time phrases like "after 1 hour", "7 pm", "tomorrow", "after isha", "after asr", "Sunday 10 am", "tomorrow morning", or "at noon", extract that as "preferred_contact_time".
-6. If the user says "change my email to ..." or "use this number instead", extract only the changed fields.
-7. Do not invent values.
-8. If no contact field is present, return an empty JSON object {{}}.
+5. If the user sends a time phrase naturally, extract it as "preferred_contact_time".
+6. Time may be phrased in many natural ways.
+7. If the user says "change my email to ..." or "use this number instead", extract only the changed fields.
+8. Do not invent values.
+9. If no contact field is present, return an empty JSON object {{}}.
+10. If the user message is mainly a time adjustment relative to the previously saved preferred contact time, still extract it as "preferred_contact_time".
 
 Safe context:
 {json.dumps(safe_context, ensure_ascii=False, indent=2)}
@@ -702,9 +629,9 @@ User message:
     raw = response.content if hasattr(response, "content") else str(response)
     parsed = parse_json(raw)
 
-    result = normalize_contact_result(parsed)
+    result = normalize_contact_result(parsed, state)
     if result["valid_updates"] or result["invalid_fields"] or result["field_errors"]:
         return result
 
     fallback = fallback_extract_contact_updates(user_message)
-    return normalize_contact_result(fallback)
+    return normalize_contact_result(fallback, state)

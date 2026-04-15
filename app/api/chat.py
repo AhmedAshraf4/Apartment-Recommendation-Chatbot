@@ -1,11 +1,18 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+import json
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-import json
+
 from app.graph.workflow import chat_graph
+
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 session_store = {}
+
+CAIRO_TZ = ZoneInfo("Africa/Cairo")
 
 
 class ChatRequest(BaseModel):
@@ -48,19 +55,20 @@ async def chat_stream(request_data: ChatRequest):
         raise HTTPException(status_code=400, detail="message cannot be empty")
 
     saved_state = dict(session_store.get(session_id, {}) or {})
+
+    if not saved_state.get("conversation_started_at_iso"):
+        saved_state["conversation_started_at_iso"] = datetime.now(CAIRO_TZ).isoformat()
+
     existing_history = saved_state.get("chat_history", [])
     updated_history = append_history(existing_history, "user", user_message)
 
-    # Explicitly preserve all important conversational state across turns
     chat_state = {
         **saved_state,
+        "message_received_at_iso": datetime.now(CAIRO_TZ).isoformat(),
         "chat_history": updated_history,
         "user_query": user_message,
         "pending_confirmation": saved_state.get("pending_confirmation", {}),
     }
-
-    print("DEBUG chat_stream incoming session_id =", session_id)
-    print("DEBUG chat_stream saved pending_confirmation =", saved_state.get("pending_confirmation"))
 
     def event_generator():
         final_state = dict(chat_state)
@@ -84,13 +92,9 @@ async def chat_stream(request_data: ChatRequest):
                 if stream_type != "updates":
                     continue
 
-                for node_name, state_change in stream_data.items():
+                for _, state_change in stream_data.items():
                     if not isinstance(state_change, dict):
                         continue
-
-                    print(f"DEBUG node={node_name} state_change keys={list(state_change.keys())}")
-                    if "pending_confirmation" in state_change:
-                        print(f"DEBUG node={node_name} pending_confirmation={state_change.get('pending_confirmation')}")
 
                     final_state.update(state_change)
 
@@ -115,15 +119,18 @@ async def chat_stream(request_data: ChatRequest):
             yield to_sse_event({"error": str(exc)}, event="error")
 
         finally:
-            assistant_reply = str(final_state.get("reply") or sent_text).strip()
-            final_history = final_state.get("chat_history", updated_history)
-            final_history = append_history(final_history, "assistant", assistant_reply)
-            final_state["chat_history"] = final_history
+            assistant_reply = sent_text.strip()
 
-            # Keep pending_confirmation explicit so it cannot be lost silently
-            final_state["pending_confirmation"] = final_state.get("pending_confirmation", {})
-
-            print("DEBUG chat_stream final pending_confirmation =", final_state.get("pending_confirmation"))
+            if assistant_reply:
+                final_state["chat_history"] = append_history(
+                    final_state.get("chat_history", []),
+                    "assistant",
+                    assistant_reply,
+                )
+                final_state["reply"] = assistant_reply
+                final_state["stream_text"] = assistant_reply
+            else:
+                final_state["chat_history"] = final_state.get("chat_history", updated_history)
 
             session_store[session_id] = final_state
 
@@ -131,7 +138,7 @@ async def chat_stream(request_data: ChatRequest):
         event_generator(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache, no-transform",
+            "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },

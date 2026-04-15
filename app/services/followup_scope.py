@@ -63,35 +63,70 @@ def classify_followup_scope(user_message: str, state: dict) -> dict:
     }
 
     prompt = f"""
-You are a strict routing helper for a real-estate assistant.
+    You are a strict routing helper for a real-estate assistant.
 
-Return JSON only.
-Do not explain anything.
+    Return JSON only.
+    Do not explain anything.
+    Do not output markdown.
 
-Choose one value for "scope":
-- "shown_list" -> the user is asking about the currently shown apartments as a group
-- "selected_apartment" -> the user is asking about the currently focused apartment
-- "new_search" -> the user is asking for a new search / changed criteria
-- "none" -> unclear / none of the above
+    Choose one value for "scope":
+    - "shown_list" -> the user is asking about the currently shown apartments as a group
+    - "selected_apartment" -> the user is asking about the currently focused apartment
+    - "new_search" -> the user is asking for a new apartment search or changing the search criteria/listing set
+    - "none" -> unclear / none of the above
 
-Rules:
-1. Short amenity follow-ups like "pools?", "gym?", "parking?", "green areas?" should usually be "shown_list" if apartments are currently shown and no single apartment is clearly being discussed.
-2. Pronoun follow-ups like "does it have a pool?" should usually be "selected_apartment" if a selected apartment exists.
-3. Explicit new requests like "i want a townhouse in zayed" should be "new_search".
-4. If the user refers to "above", "these", "those", or asks about the current options as a group, choose "shown_list".
-5. If uncertain, use the safest reasonable interpretation from the context.
+    Interpret the user's message by meaning, not by exact grammar.
+    The user may write short, broken, or informal English.
 
-Return exactly:
-{{
-  "scope": "none"
-}}
+    Rules:
+    1. Amenity questions about the currently shown apartments should be "shown_list".
+    2. Examples that should usually be "shown_list":
+       - "pool?"
+       - "gym?"
+       - "parking?"
+       - "which of the above have a pool?"
+       - "which one has gym?"
+       - "any with clubhouse?"
+       - "which options have garden view?"
+    3. Pronoun follow-ups like "does it have a pool?", "how much is it?", "is it larger?" should usually be "selected_apartment" if a selected apartment exists.
+    4. Explicit new requests like "i want a townhouse in zayed" should be "new_search".
+    5. Messages should be "new_search" only when the user is changing or requesting a new search axis such as:
+       - city or location
+       - property type
+       - price/budget
+       - bedrooms/bathrooms
+       - size
+       - sorting
+    6. Examples that should usually be "new_search":
+       - "october?"
+       - "options in october?"
+       - "options is october?"
+       - "what about october?"
+       - "zayed instead"
+       - "new cairo?"
+       - "villa options?"
+       - "cheaper ones?"
+       - "3 bedrooms?"
+       - "under 4 million?"
+       - "sort by price"
+    7. If the user refers to "above", "these", "those", "the options", or asks about the current options as a group, choose "shown_list" unless they are clearly changing the search criteria.
+    8. If the user is clearly continuing discussion about one focused apartment, choose "selected_apartment".
+    9. Do not classify amenity-only questions as "new_search" unless the user clearly asks for a fresh search based on that amenity.
+    10. If uncertain between "shown_list" and "new_search":
+       - choose "shown_list" for amenity/comparison questions about current results
+       - choose "new_search" for location/filter/property-type changes
 
-Safe context:
-{json.dumps(safe_context, ensure_ascii=False, indent=2)}
+    Return exactly:
+    {{
+      "scope": "none"
+    }}
 
-User message:
-{user_message}
-""".strip()
+    Safe context:
+    {json.dumps(safe_context, ensure_ascii=False, indent=2)}
+
+    User message:
+    {user_message}
+    """.strip()
 
     response = llm.invoke(prompt)
     raw = response.content if hasattr(response, "content") else str(response)
