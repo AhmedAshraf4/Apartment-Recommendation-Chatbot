@@ -197,6 +197,12 @@ def plan_action_llm(user_message: str, state: dict) -> dict:
     3. "select_apartment"
     Use when the user is choosing one specific apartment.
 
+    This includes:
+    - choosing by pronoun when one apartment is clearly in focus
+    - choosing by ordinal from a shown list
+    - choosing by explicit apartment ID
+    - switching from one apartment to another by explicitly naming a different apartment
+
     Examples:
     - i want this one
     - i want this
@@ -207,6 +213,11 @@ def plan_action_llm(user_message: str, state: dict) -> dict:
     - i’ll take the first one
     - this is the one i want
     - i want the selected one
+    - i want ap023
+    - i choose ap023
+    - go with ap023
+    - use ap023
+    - i want apartment ap023
 
     4. "analyze_shown_apartments"
     Use when the user is asking about the currently shown apartments as a group.
@@ -348,6 +359,14 @@ def plan_action_llm(user_message: str, state: dict) -> dict:
     31. If the user says "i want it", "i want this", "i want this one", "this is the one", or similar, and one apartment is clearly selected or in focus, choose "select_apartment".
     32. If the user uses pronouns like "it" or "this" to choose an apartment, prefer "select_apartment" over "reply_direct".
     33. Do not require an explicit apartment ID or ordinal when one apartment is already clearly in focus and the user is clearly expressing selection.
+    34. If the user clearly expresses apartment choice with an explicit apartment ID, such as:
+       - "i want ap023"
+       - "i choose ap023"
+       - "go with ap023"
+       - "use ap023"
+       then choose "select_apartment".
+    35. An explicit apartment-choice message with a direct apartment ID should override the previously focused apartment.
+    36. Do not keep the old selected apartment when the latest message clearly selects a different apartment by ID.
 
     Important examples:
 
@@ -406,12 +425,19 @@ def plan_action_llm(user_message: str, state: dict) -> dict:
     History: selected apartment is in focus
     User: "does it have a pool?"
     Output action: "get_apartment_details"
-    
+
     Example L:
     History: one apartment is clearly in focus
     User: "i want it"
     Output action: "select_apartment"
     reference_type: "selected"
+
+    Example M:
+    History: user previously focused or submitted a request for apartment ap025
+    User: "i want ap023"
+    Output action: "select_apartment"
+    reference_type: "id"
+    reference_value: "ap023"
 
     Return exactly this JSON shape:
     {{

@@ -8,7 +8,7 @@ from langsmith import traceable
 
 from app.core.config import settings
 from app.graph.state import ChatState
-from app.services.agent_schedule_db import reserve_agent_time_slot
+from app.services.agent_schedule_db import reserve_booking_time_slot
 from app.services.email_gen import send_email
 from app.services.extract_contact_updates import extract_contact_updates_llm
 from app.services.lead_prepare import (
@@ -91,38 +91,64 @@ def classify_id_intent_llm(user_message: str, apartment_id: str, state: dict) ->
     }
 
     prompt = f"""
-You classify what the user intends when they mention an apartment ID.
+    You classify what the user intends when they mention an apartment ID.
 
-Return JSON only.
-Do not explain anything.
-Do not output markdown.
+    Return JSON only.
+    Do not explain anything.
+    Do not output markdown.
 
-Default behavior:
-If the context is not strong enough, choose "get_apartment_details".
+    Allowed actions:
+    - "get_apartment_details"
+    - "compare_apartments"
+    - "select_apartment"
+    - "submit_lead"
 
-Allowed actions:
-- "get_apartment_details"
-- "compare_apartments"
-- "select_apartment"
-- "submit_lead"
+    Default behavior:
+    If the message is only a bare apartment ID with no clear intent, choose "get_apartment_details".
 
-Rules:
-1. Bare apartment IDs usually mean "get_apartment_details".
-2. Only choose "compare_apartments" if the recent message/history clearly indicates comparison.
-3. Only choose "select_apartment" if the user is clearly choosing or focusing on that unit.
-4. Only choose "submit_lead" if the user is clearly trying to proceed/contact/book/request callback for that unit.
-5. If uncertain, return "get_apartment_details".
+    Priority order:
+    1. If the user is clearly CHOOSING an apartment by explicit ID, choose "select_apartment".
+    2. If the user is clearly COMPARING apartments, choose "compare_apartments".
+    3. If the user is clearly asking to proceed/contact/book for that apartment, choose "submit_lead".
+    4. Otherwise choose "get_apartment_details".
 
-Return exactly this schema:
-{{
-  "action": "get_apartment_details",
-  "confidence": 0.82,
-  "reason": "bare apartment id with no strong competing intent"
-}}
+    Very important:
+    Explicit apartment choice by ID is STRONGER than prior submit/lead context.
+    If the latest message clearly chooses a different apartment by ID, do NOT keep the old apartment and do NOT choose "submit_lead".
 
-Context:
-{json.dumps(context, ensure_ascii=False, indent=2)}
-""".strip()
+    Examples that MUST be "select_apartment":
+    - "i want ap023"
+    - "i choose ap023"
+    - "go with ap023"
+    - "use ap023"
+    - "i want apartment ap023"
+    - "i'll take ap023"
+
+    Examples that may be "submit_lead":
+    - "submit ap023"
+    - "proceed with ap023"
+    - "book ap023"
+    - "contact them for ap023"
+
+    Examples that should be "get_apartment_details":
+    - "ap023"
+    - "details about ap023"
+    - "tell me about ap023"
+
+    Examples that should be "compare_apartments":
+    - "compare ap023 with ap025"
+    - "is ap023 better than ap025"
+
+    Return exactly this schema:
+    {{
+      "action": "get_apartment_details",
+      "confidence": 0.82,
+      "reason": "bare apartment id with no strong competing intent"
+    }}
+
+    Context:
+    {json.dumps(context, ensure_ascii=False, indent=2)}
+    """.strip()
 
     response = llm.invoke(prompt)
     raw = response.content if hasattr(response, "content") else str(response)
@@ -1011,31 +1037,45 @@ def send_lead_node(state):
             "stream_text": reply,
         }
 
-    reservation = reserve_agent_time_slot(
+    reservation = reserve_booking_time_slot(
         agent_email=agent_email,
+        user_email=lead_email,
         requested_contact_at_iso=requested_contact_at_iso,
         apartment_id=apartment_id,
-        lead_email=lead_email,
     )
-
 
     if not reservation.get("success"):
         conflict = reservation.get("conflict") or {}
+        conflict_type = str(reservation.get("conflict_type") or "").strip().lower()
         busy_from_iso = conflict.get("busy_from")
         busy_to_iso = conflict.get("busy_to")
 
-        if busy_from_iso and busy_to_iso:
-            reply = (
-                "The agent responsible for this apartment is busy in that time window. "
-                f"The blocked period is from {format_iso_for_display(busy_from_iso)} "
-                f"to {format_iso_for_display(busy_to_iso)}. "
-                "Please choose another contact time."
-            )
+        if conflict_type == "user":
+            if busy_from_iso and busy_to_iso:
+                reply = (
+                    "You already have another booking in that time window. "
+                    f"Your blocked period is from {format_iso_for_display(busy_from_iso)} "
+                    f"to {format_iso_for_display(busy_to_iso)}. "
+                    "Please choose another contact time."
+                )
+            else:
+                reply = (
+                    "You already have another booking at that time. "
+                    "Please choose another contact time."
+                )
         else:
-            reply = (
-                "The agent responsible for this apartment is busy at that time. "
-                "Please choose another contact time."
-            )
+            if busy_from_iso and busy_to_iso:
+                reply = (
+                    "The agent responsible for this apartment is busy in that time window. "
+                    f"The blocked period is from {format_iso_for_display(busy_from_iso)} "
+                    f"to {format_iso_for_display(busy_to_iso)}. "
+                    "Please choose another contact time."
+                )
+            else:
+                reply = (
+                    "The agent responsible for this apartment is busy at that time. "
+                    "Please choose another contact time."
+                )
 
         return {
             "reply": reply,

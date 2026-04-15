@@ -71,8 +71,9 @@ def upsert_agent_emails(agent_emails: list[str]) -> None:
         conn.commit()
 
 
-@traceable(name="reserve_agent_time_slot")
-def reserve_agent_time_slot(
+def _reserve_agent_time_slot_in_tx(
+    cur,
+    *,
     agent_email: str,
     requested_contact_at_iso: str,
     apartment_id: str,
@@ -102,116 +103,321 @@ def reserve_agent_time_slot(
 
     window = compute_busy_window(requested_contact_at_iso)
 
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            # Does this same user already have a booking for this same unit with this same agent?
-            cur.execute(
-                """
-                select busy_from, busy_to
-                from agent_busy_slots
-                where agent_email = %s
-                  and lead_email = %s
-                  and apartment_id = %s
-                limit 1
-                """,
-                (
-                    agent_email,
-                    lead_email,
-                    apartment_id,
-                ),
+    cur.execute(
+        """
+        select busy_from, busy_to
+        from agent_busy_slots
+        where agent_email = %s
+          and lead_email = %s
+          and apartment_id = %s
+        limit 1
+        """,
+        (
+            agent_email,
+            lead_email,
+            apartment_id,
+        ),
+    )
+    existing_same_intent = cur.fetchone()
+
+    cur.execute(
+        """
+        select agent_email, busy_from, busy_to, apartment_id, lead_email
+        from agent_busy_slots
+        where agent_email = %s
+          and busy_from < %s
+          and busy_to > %s
+          and busy_from <> %s
+          and not (
+              lead_email = %s
+              and apartment_id = %s
+          )
+        limit 1
+        """,
+        (
+            agent_email,
+            window["busy_to"],
+            window["busy_from"],
+            PLACEHOLDER_DT,
+            lead_email,
+            apartment_id,
+        ),
+    )
+    conflict = cur.fetchone()
+
+    if conflict:
+        return {
+            "success": False,
+            "message": "Agent is busy in that time window.",
+            "conflict_type": "agent",
+            "conflict": {
+                "agent_email": conflict[0],
+                "busy_from": conflict[1].isoformat(),
+                "busy_to": conflict[2].isoformat(),
+                "apartment_id": conflict[3],
+                "lead_email": conflict[4],
+            },
+        }
+
+    if existing_same_intent:
+        old_busy_from, old_busy_to = existing_same_intent
+
+        cur.execute(
+            """
+            update agent_busy_slots
+            set busy_from = %s,
+                busy_to = %s
+            where agent_email = %s
+              and lead_email = %s
+              and apartment_id = %s
+              and busy_from = %s
+              and busy_to = %s
+            """,
+            (
+                window["busy_from"],
+                window["busy_to"],
+                agent_email,
+                lead_email,
+                apartment_id,
+                old_busy_from,
+                old_busy_to,
+            ),
+        )
+    else:
+        cur.execute(
+            """
+            insert into agent_busy_slots (
+                agent_email,
+                busy_from,
+                busy_to,
+                apartment_id,
+                lead_email
             )
-            existing_same_intent = cur.fetchone()
-
-            # Check conflict with other bookings for the same agent.
-            # Exclude this same user+same unit row because that one is the one we want to modify.
-            cur.execute(
-                """
-                select agent_email, busy_from, busy_to, apartment_id, lead_email
-                from agent_busy_slots
-                where agent_email = %s
-                  and busy_from < %s
-                  and busy_to > %s
-                  and not (
-                      lead_email = %s
-                      and apartment_id = %s
-                  )
-                limit 1
-                """,
-                (
-                    agent_email,
-                    window["busy_to"],
-                    window["busy_from"],
-                    lead_email,
-                    apartment_id,
-                ),
-            )
-            conflict = cur.fetchone()
-
-            if conflict:
-                return {
-                    "success": False,
-                    "message": "Agent is busy in that time window.",
-                    "conflict": {
-                        "agent_email": conflict[0],
-                        "busy_from": conflict[1].isoformat(),
-                        "busy_to": conflict[2].isoformat(),
-                        "apartment_id": conflict[3],
-                        "lead_email": conflict[4],
-                    },
-                }
-
-            if existing_same_intent:
-                old_busy_from, old_busy_to = existing_same_intent
-
-                cur.execute(
-                    """
-                    update agent_busy_slots
-                    set busy_from = %s,
-                        busy_to = %s
-                    where agent_email = %s
-                      and lead_email = %s
-                      and apartment_id = %s
-                      and busy_from = %s
-                      and busy_to = %s
-                    """,
-                    (
-                        window["busy_from"],
-                        window["busy_to"],
-                        agent_email,
-                        lead_email,
-                        apartment_id,
-                        old_busy_from,
-                        old_busy_to,
-                    ),
-                )
-            else:
-                cur.execute(
-                    """
-                    insert into agent_busy_slots (
-                        agent_email,
-                        busy_from,
-                        busy_to,
-                        apartment_id,
-                        lead_email
-                    )
-                    values (%s, %s, %s, %s, %s)
-                    """,
-                    (
-                        agent_email,
-                        window["busy_from"],
-                        window["busy_to"],
-                        apartment_id,
-                        lead_email,
-                    ),
-                )
-
-        conn.commit()
+            values (%s, %s, %s, %s, %s)
+            """,
+            (
+                agent_email,
+                window["busy_from"],
+                window["busy_to"],
+                apartment_id,
+                lead_email,
+            ),
+        )
 
     return {
         "success": True,
         "contact_at_iso": window["contact_at_iso"],
         "busy_from_iso": window["busy_from_iso"],
         "busy_to_iso": window["busy_to_iso"],
+    }
+
+
+def _reserve_user_time_slot_in_tx(
+    cur,
+    *,
+    user_email: str,
+    requested_contact_at_iso: str,
+    apartment_id: str,
+    agent_email: str,
+) -> dict:
+    user_email = normalize_email(user_email)
+    agent_email = normalize_email(agent_email)
+    apartment_id = str(apartment_id or "").strip().lower()
+
+    if not user_email:
+        return {
+            "success": False,
+            "message": "Missing user email.",
+        }
+
+    if not agent_email:
+        return {
+            "success": False,
+            "message": "Missing agent email.",
+        }
+
+    if not apartment_id:
+        return {
+            "success": False,
+            "message": "Missing apartment id.",
+        }
+
+    window = compute_busy_window(requested_contact_at_iso)
+
+    cur.execute(
+        """
+        select busy_from, busy_to
+        from user_busy_slots
+        where user_email = %s
+          and apartment_id = %s
+          and agent_email = %s
+        limit 1
+        """,
+        (
+            user_email,
+            apartment_id,
+            agent_email,
+        ),
+    )
+    existing_same_intent = cur.fetchone()
+
+    cur.execute(
+        """
+        select user_email, busy_from, busy_to, apartment_id, agent_email
+        from user_busy_slots
+        where user_email = %s
+          and busy_from < %s
+          and busy_to > %s
+          and not (
+              apartment_id = %s
+              and agent_email = %s
+          )
+        limit 1
+        """,
+        (
+            user_email,
+            window["busy_to"],
+            window["busy_from"],
+            apartment_id,
+            agent_email,
+        ),
+    )
+    conflict = cur.fetchone()
+
+    if conflict:
+        return {
+            "success": False,
+            "message": "User is busy in that time window.",
+            "conflict_type": "user",
+            "conflict": {
+                "user_email": conflict[0],
+                "busy_from": conflict[1].isoformat(),
+                "busy_to": conflict[2].isoformat(),
+                "apartment_id": conflict[3],
+                "agent_email": conflict[4],
+            },
+        }
+
+    if existing_same_intent:
+        old_busy_from, old_busy_to = existing_same_intent
+
+        cur.execute(
+            """
+            update user_busy_slots
+            set busy_from = %s,
+                busy_to = %s
+            where user_email = %s
+              and apartment_id = %s
+              and agent_email = %s
+              and busy_from = %s
+              and busy_to = %s
+            """,
+            (
+                window["busy_from"],
+                window["busy_to"],
+                user_email,
+                apartment_id,
+                agent_email,
+                old_busy_from,
+                old_busy_to,
+            ),
+        )
+    else:
+        cur.execute(
+            """
+            insert into user_busy_slots (
+                user_email,
+                busy_from,
+                busy_to,
+                apartment_id,
+                agent_email
+            )
+            values (%s, %s, %s, %s, %s)
+            """,
+            (
+                user_email,
+                window["busy_from"],
+                window["busy_to"],
+                apartment_id,
+                agent_email,
+            ),
+        )
+
+    return {
+        "success": True,
+        "contact_at_iso": window["contact_at_iso"],
+        "busy_from_iso": window["busy_from_iso"],
+        "busy_to_iso": window["busy_to_iso"],
+    }
+
+
+@traceable(name="reserve_agent_time_slot")
+def reserve_agent_time_slot(
+    agent_email: str,
+    requested_contact_at_iso: str,
+    apartment_id: str,
+    lead_email: str,
+) -> dict:
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            result = _reserve_agent_time_slot_in_tx(
+                cur,
+                agent_email=agent_email,
+                requested_contact_at_iso=requested_contact_at_iso,
+                apartment_id=apartment_id,
+                lead_email=lead_email,
+            )
+        if result.get("success"):
+            conn.commit()
+        else:
+            conn.rollback()
+
+    return result
+
+
+@traceable(name="reserve_booking_time_slot")
+def reserve_booking_time_slot(
+    *,
+    agent_email: str,
+    user_email: str,
+    requested_contact_at_iso: str,
+    apartment_id: str,
+) -> dict:
+    agent_email = normalize_email(agent_email)
+    user_email = normalize_email(user_email)
+    apartment_id = str(apartment_id or "").strip().lower()
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            agent_result = _reserve_agent_time_slot_in_tx(
+                cur,
+                agent_email=agent_email,
+                requested_contact_at_iso=requested_contact_at_iso,
+                apartment_id=apartment_id,
+                lead_email=user_email,
+            )
+            if not agent_result.get("success"):
+                conn.rollback()
+                return agent_result
+
+            user_result = _reserve_user_time_slot_in_tx(
+                cur,
+                user_email=user_email,
+                requested_contact_at_iso=requested_contact_at_iso,
+                apartment_id=apartment_id,
+                agent_email=agent_email,
+            )
+            if not user_result.get("success"):
+                conn.rollback()
+                return user_result
+
+        conn.commit()
+
+    return {
+        "success": True,
+        "contact_at_iso": agent_result["contact_at_iso"],
+        "busy_from_iso": agent_result["busy_from_iso"],
+        "busy_to_iso": agent_result["busy_to_iso"],
     }
 
 
@@ -226,5 +432,11 @@ def cleanup_old_busy_slots() -> None:
                   and busy_from <> %s
                 """,
                 (PLACEHOLDER_DT,),
+            )
+            cur.execute(
+                """
+                delete from user_busy_slots
+                where busy_to < now()
+                """,
             )
         conn.commit()
