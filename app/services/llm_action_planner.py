@@ -367,6 +367,7 @@ def plan_action_llm(user_message: str, state: dict) -> dict:
        then choose "select_apartment".
     35. An explicit apartment-choice message with a direct apartment ID should override the previously focused apartment.
     36. Do not keep the old selected apartment when the latest message clearly selects a different apartment by ID.
+    37. If the user asks to delete a booking, cancel a booking, remove a booking, or view busy times / unavailable times, do not choose "submit_lead" or "update_lead_data". Choose "reply_direct" or "fallback_chat" and respond that they cannot delete bookings or view busy times here, but they can modify their booking to another time.
 
     Important examples:
 
@@ -438,6 +439,18 @@ def plan_action_llm(user_message: str, state: dict) -> dict:
     Output action: "select_apartment"
     reference_type: "id"
     reference_value: "ap023"
+    
+    Example N:
+    History: user already has a booking
+    User: "can i delete my booking?"
+    Output action: "reply_direct"
+    reply: "You cannot delete bookings here, but you can modify your booking to another time."
+    
+    Example O:
+    History: user already has a booking
+    User: "show me the busy times"
+    Output action: "reply_direct"
+    reply: "You cannot view busy times here, but you can modify your booking to another time."
 
     Return exactly this JSON shape:
     {{

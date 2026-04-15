@@ -440,3 +440,42 @@ def cleanup_old_busy_slots() -> None:
                 """,
             )
         conn.commit()
+
+@traceable(name="check_booking_time_availability")
+def check_booking_time_availability(
+    *,
+    agent_email: str,
+    user_email: str,
+    requested_contact_at_iso: str,
+    apartment_id: str,
+) -> dict:
+    agent_email = normalize_email(agent_email)
+    user_email = normalize_email(user_email)
+    apartment_id = str(apartment_id or "").strip().lower()
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            agent_result = _reserve_agent_time_slot_in_tx(
+                cur,
+                agent_email=agent_email,
+                requested_contact_at_iso=requested_contact_at_iso,
+                apartment_id=apartment_id,
+                lead_email=user_email,
+            )
+            conn.rollback()
+            if not agent_result.get("success"):
+                return agent_result
+
+        with conn.cursor() as cur:
+            user_result = _reserve_user_time_slot_in_tx(
+                cur,
+                user_email=user_email,
+                requested_contact_at_iso=requested_contact_at_iso,
+                apartment_id=apartment_id,
+                agent_email=agent_email,
+            )
+            conn.rollback()
+            if not user_result.get("success"):
+                return user_result
+
+    return {"success": True}

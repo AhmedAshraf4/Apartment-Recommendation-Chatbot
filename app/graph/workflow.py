@@ -8,7 +8,10 @@ from langsmith import traceable
 
 from app.core.config import settings
 from app.graph.state import ChatState
-from app.services.agent_schedule_db import reserve_booking_time_slot
+from app.services.agent_schedule_db import (
+    check_booking_time_availability,
+    reserve_booking_time_slot,
+)
 from app.services.email_gen import send_email
 from app.services.extract_contact_updates import extract_contact_updates_llm
 from app.services.lead_prepare import (
@@ -168,6 +171,45 @@ def classify_id_intent_llm(user_message: str, apartment_id: str, state: dict) ->
         "confidence": parsed.get("confidence"),
         "reason": parsed.get("reason"),
     }
+
+
+def validate_booking_availability_for_lead_time(state: dict, lead_snapshot: dict) -> dict:
+    lead_snapshot = dict(lead_snapshot or {})
+    apartment_id = str(lead_snapshot.get("apartment_id") or "").strip().lower()
+    user_email = str(lead_snapshot.get("email") or "").strip().lower()
+    requested_contact_at_iso = str(lead_snapshot.get("preferred_contact_time_iso") or "").strip()
+
+    if not apartment_id or not user_email or not requested_contact_at_iso:
+        return {"success": True, "skipped": True}
+
+    selected_apartment = None
+
+    for apt in (state.get("last_shown_apartments") or []):
+        if str(apt.get("apartment_id") or "").strip().lower() == apartment_id:
+            selected_apartment = apt
+            break
+
+    if selected_apartment is None and state.get("selected_apartment"):
+        current_selected = state.get("selected_apartment") or {}
+        if str(current_selected.get("apartment_id") or "").strip().lower() == apartment_id:
+            selected_apartment = current_selected
+
+    if selected_apartment is None:
+        selected_apartment = get_apartment_by_exact_id(apartment_id)
+
+    if selected_apartment is None:
+        return {"success": True, "skipped": True}
+
+    agent_email = str(selected_apartment.get("agent_email") or "").strip().lower()
+    if not agent_email:
+        return {"success": True, "skipped": True}
+
+    return check_booking_time_availability(
+        agent_email=agent_email,
+        user_email=user_email,
+        requested_contact_at_iso=requested_contact_at_iso,
+        apartment_id=apartment_id,
+    )
 
 
 def query_mentions_sorting(user_query: str) -> bool:
@@ -901,6 +943,50 @@ def update_lead_data_node(state):
 
     merged_lead = {**hydrated_before, **field_updates}
     updated_profile = {**user_profile, **field_updates}
+
+    # final addition: validate booking availability when user enters/modifies time
+    if (
+        merged_lead.get("preferred_contact_time_iso")
+        and merged_lead.get("email")
+        and merged_lead.get("apartment_id")
+        and (
+            "preferred_contact_time" in field_updates
+            or "preferred_contact_time_iso" in field_updates
+        )
+    ):
+        availability_result = validate_booking_availability_for_lead_time(state, merged_lead)
+
+        if not availability_result.get("success"):
+            conflict_type = str(availability_result.get("conflict_type") or "").strip().lower()
+
+            # revert only the attempted time update
+            merged_lead["preferred_contact_time"] = hydrated_before.get("preferred_contact_time")
+            merged_lead["preferred_contact_time_iso"] = hydrated_before.get("preferred_contact_time_iso")
+            updated_profile["preferred_contact_time"] = user_profile.get("preferred_contact_time")
+            updated_profile["preferred_contact_time_iso"] = user_profile.get("preferred_contact_time_iso")
+
+            field_updates.pop("preferred_contact_time", None)
+            field_updates.pop("preferred_contact_time_iso", None)
+
+            invalid_fields = list(dict.fromkeys(list(invalid_fields) + ["preferred_contact_time"]))
+
+            if conflict_type == "user":
+                message = (
+                    "This time is not available because you already have another booking then. "
+                    "You can modify your booking to another time, but you cannot view busy times or delete bookings here."
+                )
+            else:
+                message = (
+                    "This time is not available. "
+                    "You can modify your booking to another time, but you cannot view busy times or delete bookings here."
+                )
+
+            field_errors["preferred_contact_time"] = {
+                "reason": f"{conflict_type or 'booking'}_busy",
+                "suggestion": None,
+                "message": message,
+            }
+
     missing_fields = get_missing_fields(merged_lead)
     just_completed = bool(missing_before) and not missing_fields
 
@@ -1045,37 +1131,18 @@ def send_lead_node(state):
     )
 
     if not reservation.get("success"):
-        conflict = reservation.get("conflict") or {}
         conflict_type = str(reservation.get("conflict_type") or "").strip().lower()
-        busy_from_iso = conflict.get("busy_from")
-        busy_to_iso = conflict.get("busy_to")
 
         if conflict_type == "user":
-            if busy_from_iso and busy_to_iso:
-                reply = (
-                    "You already have another booking in that time window. "
-                    f"Your blocked period is from {format_iso_for_display(busy_from_iso)} "
-                    f"to {format_iso_for_display(busy_to_iso)}. "
-                    "Please choose another contact time."
-                )
-            else:
-                reply = (
-                    "You already have another booking at that time. "
-                    "Please choose another contact time."
-                )
+            reply = (
+                "This time is not available because you already have another booking then. "
+                "You can modify your booking to another time, but you cannot view busy times or delete bookings here."
+            )
         else:
-            if busy_from_iso and busy_to_iso:
-                reply = (
-                    "The agent responsible for this apartment is busy in that time window. "
-                    f"The blocked period is from {format_iso_for_display(busy_from_iso)} "
-                    f"to {format_iso_for_display(busy_to_iso)}. "
-                    "Please choose another contact time."
-                )
-            else:
-                reply = (
-                    "The agent responsible for this apartment is busy at that time. "
-                    "Please choose another contact time."
-                )
+            reply = (
+                "This time is not available. "
+                "You can modify your booking to another time, but you cannot view busy times or delete bookings here."
+            )
 
         return {
             "reply": reply,
@@ -1112,8 +1179,6 @@ def send_lead_node(state):
         "reply": reply,
         "stream_text": reply,
     }
-
-
 
 
 
