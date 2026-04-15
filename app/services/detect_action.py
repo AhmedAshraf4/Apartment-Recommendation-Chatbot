@@ -204,6 +204,14 @@ Rules:
    - email
    - phone
    - preferred_contact_time
+16. Bedroom-count, bathroom-count, budget, size, location, and property-type changes should be treated as "search", even when short.
+    Examples:
+    - "3 bedrooms?"
+    - "which options have 3 bedrooms?"
+    - "2 bathrooms?"
+    - "under 4 million?"
+    - "october?"
+    - "villas instead"
 
 Return exactly this JSON shape:
 {{

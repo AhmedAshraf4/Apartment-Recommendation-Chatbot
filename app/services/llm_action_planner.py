@@ -368,7 +368,8 @@ def plan_action_llm(user_message: str, state: dict) -> dict:
     35. An explicit apartment-choice message with a direct apartment ID should override the previously focused apartment.
     36. Do not keep the old selected apartment when the latest message clearly selects a different apartment by ID.
     37. If the user asks to delete a booking, cancel a booking, remove a booking, or view busy times / unavailable times, do not choose "submit_lead" or "update_lead_data". Choose "reply_direct" or "fallback_chat" and respond that they cannot delete bookings or view busy times here, but they can modify their booking to another time.
-
+    38. If the user asks a short attribute-only question about the currently shown apartments, such as "3 bedrooms?", "2 bathrooms?", or "garden view?", interpret it as: "which of the currently shown apartments match this?"
+    
     Important examples:
 
     Example A:
