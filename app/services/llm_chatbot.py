@@ -640,7 +640,7 @@ def apply_display_rules(matches, display_rules):
     return matches
 
 
-@traceable(name="search.extract_filters")
+@traceable(name="extract_meta")
 def extract_meta(user_query):
     llm = ChatOpenAI(
         model=settings.openai_model,
@@ -848,7 +848,7 @@ def sort_matches(matches, filters):
     return matches
 
 
-@traceable(name="search.retrieve_apartments")
+@traceable(name="search_apartments")
 def search_apartments(user_query, filters, top_k):
     embedding_model = OpenAIEmbeddings(
         model=settings.openai_embedding_model,
@@ -1104,7 +1104,7 @@ User question:
     return "".join(collected).strip()
 
 
-@traceable(name="chat.general_reply")
+@traceable(name="general_chat_stream_to_writer")
 def general_chat_stream_to_writer(user_query: str, state: dict) -> str:
     writer = get_stream_writer()
 
@@ -1375,7 +1375,7 @@ def fallback_chat_stream_to_writer(user_query: str, state: dict) -> str:
     return "".join(collected).strip()
 
 
-@traceable(name="search.reply_shown_list")
+@traceable(name="shown_apartments_followup_stream_to_writer")
 def shown_apartments_followup_stream_to_writer(user_query: str, apartments: list[dict]) -> str:
     writer = get_stream_writer()
 
@@ -1463,7 +1463,7 @@ User question:
     return "".join(collected).strip()
 
 
-@traceable(name="search.get_apartment_by_id")
+@traceable(name="get_apartment_by_exact_id")
 def get_apartment_by_exact_id(apartment_id: str):
     apartment_id = str(apartment_id or "").strip().lower()
     if not apartment_id:
@@ -1514,7 +1514,7 @@ import json
 from app.core.config import settings
 
 
-@traceable(name="lead.reply_status")
+@traceable(name="lead_status_stream_to_writer")
 def lead_status_stream_to_writer(
     *,
     user_query: str,

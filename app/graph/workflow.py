@@ -65,7 +65,7 @@ def _safe_json(text: str):
     return None
 
 
-@traceable(name="planner.classify_id_intent")
+
 def classify_id_intent_llm(user_message: str, apartment_id: str, state: dict) -> dict:
     llm = ChatOpenAI(
         model=settings.openai_model,
@@ -783,7 +783,7 @@ def search_node(state):
     }
 
 
-@traceable(name="workflow.company_info")
+@traceable(name="company_info_node")
 def company_info_node(state):
     user_message = state["user_query"]
     reply = company_info_stream_to_writer(user_message)

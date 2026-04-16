@@ -49,7 +49,7 @@ def compute_busy_window(contact_at_iso: str) -> dict:
     }
 
 
-@traceable(name="booking.seed_agent_slots")
+@traceable(name="upsert_agent_emails")
 def upsert_agent_emails(agent_emails: list[str]) -> None:
     emails = sorted(
         {normalize_email(email) for email in (agent_emails or []) if str(email or "").strip()}
@@ -351,7 +351,7 @@ def _reserve_user_time_slot_in_tx(
     }
 
 
-@traceable(name="booking.reserve_agent_slot")
+@traceable(name="reserve_agent_time_slot")
 def reserve_agent_time_slot(
     agent_email: str,
     requested_contact_at_iso: str,
@@ -375,7 +375,7 @@ def reserve_agent_time_slot(
     return result
 
 
-@traceable(name="booking.reserve_booking")
+@traceable(name="reserve_booking_time_slot")
 def reserve_booking_time_slot(
     *,
     agent_email: str,
@@ -421,7 +421,7 @@ def reserve_booking_time_slot(
     }
 
 
-@traceable(name="booking.cleanup_expired_slots")
+@traceable(name="cleanup_old_busy_slots")
 def cleanup_old_busy_slots() -> None:
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -441,7 +441,7 @@ def cleanup_old_busy_slots() -> None:
             )
         conn.commit()
 
-@traceable(name="booking.check_availability")
+@traceable(name="check_booking_time_availability")
 def check_booking_time_availability(
     *,
     agent_email: str,
