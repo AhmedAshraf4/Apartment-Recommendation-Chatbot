@@ -519,6 +519,7 @@ def looks_like_bare_name(text: str) -> bool:
     if not text:
         return False
 
+    # Keep the cheapest hard guards first.
     if "@" in text:
         return False
 
@@ -527,30 +528,18 @@ def looks_like_bare_name(text: str) -> bool:
 
     lowered = text.lower()
 
+    # Fast rejects for obviously non-name short messages.
     blocked_exact = {
-        "hi", "hii", "hiii", "hello", "hey", "thanks", "thank you", "bye",
+        "hi", "hii", "hiii", "hiiii", "hello", "hey", "thanks", "thank you", "bye",
         "tomorrow", "today", "tonight",
         "morning", "afternoon", "evening",
         "yes", "no", "ok", "okay", "sure", "cool",
-        "proceed", "continue", "submit",
-        "first", "second", "third",
+        "proceed", "proceeed", "continue", "submit", "go ahead", "send it",
+        "first", "second", "third", "fourth", "fifth",
         "apartments", "apartment", "property", "properties",
-        "pool", "garden", "view",
-        "zayed", "october", "cairo",
-    "give me",
-    "show me",
-    "find me",
-    "i want",
-    "i need",
-    "tell me",
-    "what is",
-    "what's",
-    "what was",
-    "why",
-    "how",
-    "can you",
-    "could you",
-    "search",
+        "pool", "garden", "view", "parking", "gym",
+        "zayed", "october", "cairo", "new cairo",
+        "why", "how", "what", "what's", "what was that",
     }
     if lowered in blocked_exact:
         return False
@@ -563,25 +552,95 @@ def looks_like_bare_name(text: str) -> bool:
         "i need",
         "tell me",
         "what",
-        "what's",
-        "search",
+        "why",
         "how",
         "where",
         "when",
-        "hiii",
+        "can you",
+        "could you",
+        "search",
+        "apartment",
+        "property",
     ]
     if any(phrase in lowered for phrase in blocked_substrings):
         return False
 
-    if re.fullmatch(r"[A-Za-z][A-Za-z\s.'-]{1,60}", text):
-        words = text.split()
-        if not (1 <= len(words) <= 3):
-            return False
-        if any(len(word) < 2 for word in words):
-            return False
-        return True
+    # Keep a lightweight structural gate before paying for an LLM call.
+    if not re.fullmatch(r"[A-Za-z][A-Za-z\s.'-]{1,60}", text):
+        return False
 
-    return False
+    words = text.split()
+    if not (1 <= len(words) <= 3):
+        return False
+
+    if any(len(word) < 2 for word in words):
+        return False
+
+    llm = ChatOpenAI(
+        model=settings.openai_model,
+        api_key=settings.openai_api_key,
+        temperature=0,
+    )
+
+    prompt = f"""
+You are a strict binary classifier.
+
+Task:
+Decide whether the user's message is ONLY a real human name.
+
+Return JSON only.
+Do not explain anything.
+Do not output markdown.
+
+Allowed output:
+{{"is_name": true}}
+or
+{{"is_name": false}}
+
+Rules:
+1. Return true only if the whole message is clearly just a person's real name.
+2. Return false for greetings, filler, confirmations, questions, commands, locations, apartment requests, amenities, and vague short text.
+3. Return false if you are uncertain.
+4. Do not infer or rewrite the message.
+5. A valid name may be one to three words.
+
+Examples that should be true:
+- Ahmed
+- Ahmed Ashraf
+- Sara Mohamed
+- Alaa
+- Mohamed Ali
+
+Examples that should be false:
+- hi
+- hiiii
+- hello
+- okay
+- proceed
+- what was that
+- zayed
+- october
+- pool view
+- first one
+- apartment in zayed
+- show me apartments
+- tomorrow 10 am
+
+User message:
+{text}
+""".strip()
+
+    try:
+        response = llm.invoke(prompt)
+        raw = response.content if hasattr(response, "content") else str(response)
+        parsed = parse_json(raw)
+
+        if not isinstance(parsed, dict):
+            return False
+
+        return bool(parsed.get("is_name", False))
+    except Exception:
+        return False
 
 
 def fallback_extract_contact_updates(user_message: str) -> dict:
