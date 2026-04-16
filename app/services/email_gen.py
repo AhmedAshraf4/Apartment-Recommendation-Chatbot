@@ -96,7 +96,7 @@ def _send_brevo_email(client: Brevo, to_email: str, subject: str, html_content: 
     return False, f"status {response.status_code}, body {response.data}"
 
 
-@traceable(name="send_email")
+@traceable(name="email.send_mail")
 def send_email(apartment, lead_data):
     agent_email = str(apartment.get("agent_email") or "").strip()
     user_email = str(lead_data.get("email") or "").strip()
